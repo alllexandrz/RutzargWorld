@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rutzarg — Каргат</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="game"></div>
+
+  <!-- Login -->
+  <div id="login">
+    <div class="login-card">
+      <h1>RUTZARG</h1>
+      <div class="sub">живий світ · прототип «Каргат»</div>
+      <p class="lore">Прикордонне містечко Домініону Варон. Його мешканці живуть своїм життям — працюють, пліткують, позичають гроші, крадуть і пам'ятають. Світ не чекає на тебе.</p>
+      <!-- step 1: account -->
+      <div id="auth-box">
+        <div class="tabs"><button id="tab-login" class="sel" type="button">Вхід</button><button id="tab-register" type="button">Реєстрація</button></div>
+        <label>Email <input id="auth-email" type="email" autocomplete="email" maxlength="200"></label>
+        <label id="auth-name-row" hidden>Ім'я (як до тебе звертатися) <input id="auth-name" maxlength="40" autocomplete="nickname"></label>
+        <label>Пароль <input id="auth-pass" type="password" autocomplete="current-password" maxlength="200"></label>
+        <button id="auth-go" type="button">Увійти</button>
+        <div id="google-row" class="or" hidden><span>або</span></div>
+        <a id="google-btn" class="google" href="/auth/google" hidden><span class="g">G</span> Увійти через Google</a>
+        <button id="guest-btn" class="link" type="button" hidden>грати як гість, без акаунта</button>
+      </div>
+      <!-- step 2: character -->
+      <div id="char-box" hidden>
+        <div id="acc-line" class="muted"></div>
+        <button id="char-continue" type="button" hidden>Продовжити за <b id="char-name"></b></button>
+        <div id="char-new" hidden>
+          <label>Ім'я персонажа <input id="login-name" maxlength="18" placeholder="Напр. Арвен"></label>
+          <div class="row">
+            <label>Стать <select id="look-gender"><option value="m">чоловік</option><option value="f">жінка</option></select></label>
+            <label>Одяг <input id="look-body" type="color" value="#4a5f8a"></label>
+            <label>Волосся <input id="look-hair" type="color" value="#2a1a10"></label>
+            <label>Шкіра <input id="look-skin" type="color" value="#d8a880"></label>
+          </div>
+          <button id="login-go" type="button">Створити персонажа й увійти</button>
+        </div>
+        <button id="logout-btn" class="link" type="button">вийти з акаунта</button>
+      </div>
+      <div id="login-hint" class="muted"></div>
+      <div id="login-err" class="bad"></div>
+    </div>
+  </div>
+
+  <!-- In-game UI -->
+  <div id="ui" hidden>
+    <div id="hud-left" class="glass">
+      <div id="hud-name">—</div>
+      <div class="coins">⛁ <span id="hud-coins">0</span> срібла</div>
+      <div class="barrow"><span>Ситість</span><div class="bar"><i id="bar-hunger"></i></div><span id="hud-hunger" class="num"></span></div>
+      <div class="barrow"><span>Енергія</span><div class="bar en"><i id="bar-energy"></i></div><span id="hud-energy" class="num"></span></div>
+      <div id="jail" class="bad" hidden></div>
+      <div id="hud-family"></div>
+    </div>
+    <div id="hud-top" class="glass"><div id="hud-clock"></div><div id="hud-place" class="muted"></div></div>
+    <div id="hud-right">
+      <button id="btn-biz" title="Справи (B)">Справи <kbd>B</kbd></button>
+      <button id="btn-skills" title="Навички (K)">Навички <kbd>K</kbd></button>
+      <button id="btn-talklog" title="Журнал розмов (J)">Розмови <kbd>J</kbd></button>
+      <button id="btn-chronicle" title="Хроніка світу (L)">Хроніка <kbd>L</kbd></button>
+      <button id="btn-inspect" title="Спостерігач (I)">Спостерігач <kbd>I</kbd></button>
+      <button id="btn-help" title="Допомога (H)">? <kbd>H</kbd></button>
+      <button id="btn-logout" title="Вийти">⎋</button>
+      <span id="hud-ping" class="muted"></span>
+    </div>
+
+    <canvas id="minimap" title="Мапа (клік — йти туди)"></canvas>
+
+    <div id="bottom">
+      <div id="busy" hidden><span id="busy-label"></span><div class="bar"><i id="busy-fill"></i></div></div>
+      <div id="inventory"></div>
+      <div id="actionbar" class="glass">
+        <button id="btn-interact"><kbd>E</kbd> Взаємодія</button>
+        <button id="btn-gather"><kbd>F</kbd> Збирати</button>
+        <button id="btn-eat"><kbd>Q</kbd> Їсти</button>
+        <button id="btn-rest"><kbd>R</kbd> Відпочити</button>
+        <button id="btn-plant"><kbd>T</kbd> Посадити</button>
+        <button id="btn-pray"><kbd>P</kbd> Молитися</button>
+        <button id="btn-market"><kbd>M</kbd> Ринок</button>
+      </div>
+    </div>
+
+    <div id="chat" class="glass">
+      <div id="chat-log"></div>
+      <input id="chat-input" maxlength="240" placeholder="Enter — написати всім гравцям…">
+    </div>
+
+    <div id="ctx" class="glass" hidden>
+      <div id="ctx-name"></div>
+      <button id="ctx-talk"><kbd>E</kbd> Говорити</button>
+      <button id="ctx-inspect"><kbd>I</kbd> Спостерігати</button>
+      <button id="ctx-steal" class="danger">Обікрасти</button>
+      <button id="ctx-close" class="mini">✕</button>
+    </div>
+
+    <div id="toasts"></div>
+
+    <div id="panel-dialog" class="panel" hidden>
+      <div class="ph"><span id="dlg-title"></span><button class="close">✕</button></div>
+      <div id="dlg-lines"></div>
+      <div id="dlg-opts"></div>
+      <div id="dlg-arg"></div>
+      <div id="dlg-say">
+        <input id="dlg-input" maxlength="200" autocomplete="off" placeholder="Напиши, що хочеш сказати… (Enter — надіслати, Esc — закрити)">
+        <button id="dlg-send">Сказати</button>
+      </div>
+    </div>
+
+    <div id="panel-market" class="panel" hidden>
+      <div class="ph"><span>Ринкова площа Каргата</span><button class="close">✕</button></div>
+      <div id="market-body"></div>
+    </div>
+
+    <div id="panel-biz" class="panel wide" hidden>
+      <div class="ph"><span>Справи та підприємства</span><button class="close">✕</button></div>
+      <div id="biz-body"></div>
+    </div>
+
+    <div id="panel-inspect" class="panel side right" hidden>
+      <div class="ph"><span>Спостерігач <span class="muted">(dev)</span></span><button class="close">✕</button></div>
+      <div id="inspect-body"></div>
+    </div>
+
+    <div id="panel-chronicle" class="panel side left" hidden>
+      <div class="ph"><span>Хроніка світу <span class="muted">(істина світу — dev)</span></span><button class="close">✕</button></div>
+      <div id="chronicle-body"></div>
+    </div>
+
+    <div id="panel-skills" class="panel" hidden>
+      <div class="ph"><span>Навички</span><button class="close">✕</button></div>
+      <div id="skills-body"></div>
+    </div>
+
+    <div id="panel-talklog" class="panel wide" hidden>
+      <div class="ph"><span>Журнал розмов</span><button class="close">✕</button></div>
+      <div class="talklog">
+        <div id="talklog-list"></div>
+        <div id="talklog-lines"></div>
+      </div>
+    </div>
+
+    <div id="panel-help" class="panel" hidden>
+      <div class="ph"><span>Як грати</span><button class="close">✕</button></div>
+      <div class="help">
+        <p><b>Рух:</b> WASD / стрілки або клік мишею по землі. Колесо — масштаб.</p>
+        <p><b>E</b> — взаємодія: поговорити з найближчим NPC, відкрити ринок або збирати ресурс.
+           <b>F</b> — збирати (біля дерева → деревина, рудної скелі → руда, сірої скелі → камінь, трав → трави, на полі → зерно). Ресурси вичерпуються: зрубане дерево стає пнем, вибрана скеля зникає.
+           <b>T</b> — посадити саджанець (поза містом; виросте за 3 дні). Саджанці дає рубка дерев або ринок.
+           <b>Q</b> — їсти (з сумки, або купити миску в таверні). <b>R</b> — відпочити (в будівлі). <b>P</b> — молитися (храм / гай).</p>
+        <p><b>Розмова:</b> у вікні діалогу можна писати NPC будь-що — внизу є поле вводу (Enter — надіслати).
+           NPC відповідають лише з того, що самі знають: питай про людей («Що думаєш про Ліру?», «Де Горст?»), роботу, борги, крадіжки, ціни, Клумногів.</p>
+        <p><b>Кохання й сім'я:</b> компліменти й подарунки піднімають симпатію. Коли NPC до тебе небайдужий, з'явиться «Освідчитися». Після згоди приходьте разом до Храму Світанку. Подружжя живе разом, вагітність триває 20 ігрових днів.</p>
+        <p><b>M</b> — ринок (на центральній площі). <b>B</b> — справи: купити лісопилку в резиденції старости, встановити платню, каса.
+           <b>K</b> — навички (ростуть від використання). <b>J</b> — журнал розмов (усе, що тобі казали NPC). <b>L</b> — хроніка світу. <b>I</b> — спостерігач: потреби, цілі, пам'ять і стосунки вибраного персонажа.</p>
+        <p><b>Ідеї:</b> заробіть на «Стару лісопилку» раніше за купця Маркуса; переманіть робітників підвищенням платні;
+           розпитайте в таверні «що нового» і «де …?»; спробуйте здобути довіру Клумнога Ваеля в гаю на південному заході — але Клумноги дізнаються про ваші злочини.
+           Крадіжка можлива, проте свідки розповідають іншим, а варта арештовує.</p>
+        <p class="muted">Час іде завжди: 1 реальна секунда = 1 ігрова хвилина (налаштування прототипу). Світ не ставиться на паузу.</p>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="game.js"></script>
+</body>
+</html>

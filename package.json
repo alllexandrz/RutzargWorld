@@ -1,0 +1,29 @@
+{
+  "name": "rutzarg-world",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Rutzarg — AI-driven fantasy life simulator MMORPG (prototype)",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "node scripts/build-client.ts",
+    "start": "node scripts/build-client.ts && node server/main.ts",
+    "dev": "node scripts/build-client.ts --watch & node --watch server/main.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "sim": "node scripts/headless-sim.ts"
+  },
+  "dependencies": {
+    "pg": "8.13.1",
+    "phaser": "3.90.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pg": "8.11.10",
+    "@types/ws": "^8.5.13",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.8.0"
+  }
+}

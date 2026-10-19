@@ -1,0 +1,69 @@
+# Rutzarg server stack.
+#   docker compose up -d --build          → game + PostgreSQL
+#   docker compose --profile ai up -d      → + local LLM (Ollama), set RUTZARG_LLM=ollama in .env
+# Settings: copy .env.example to .env
+
+name: rutzarg
+
+services:
+  db:
+    image: postgres:17.5-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: rutzarg
+      POSTGRES_USER: rutzarg
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rutzarg -d rutzarg"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    # Uncomment to reach the database from the host (bound to localhost only):
+    # ports:
+    #   - "127.0.0.1:5432:5432"
+
+  game:
+    build: .
+    image: rutzarg-game
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://rutzarg:${POSTGRES_PASSWORD:-change-me}@db:5432/rutzarg
+      PORT: 8787
+      RUTZARG_LLM: ${RUTZARG_LLM:-off}
+      LLM_URL: ${LLM_URL:-http://ollama:11434}
+      LLM_MODEL: ${LLM_MODEL:-gemma3:4b}
+      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-15000}
+      # Accounts / sign-in
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      ALLOW_GUESTS: ${ALLOW_GUESTS:-0}
+    ports:
+      - "${GAME_PORT:-8787}:8787"
+    stop_grace_period: 20s # time to write the final world snapshot
+
+  # Optional local LLM for NPC reasoning/dialogue. CPU works but is slow; on a Linux server with an
+  # NVIDIA GPU uncomment the `deploy` block. Pull the model once:
+  #   docker compose exec ollama ollama pull gemma3:4b
+  ollama:
+    image: ollama/ollama:0.9.0
+    profiles: ["ai"]
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  db-data:
+  ollama-data:
