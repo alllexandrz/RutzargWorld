@@ -14,6 +14,9 @@ import type { Look } from "../../shared/protocol.ts";
 import type { SkillId } from "../../shared/skills.ts";
 import { trainSkill } from "./skillsys.ts";
 import { harvestTile, plantSapling, remaining } from "./resources.ts";
+import { STATION_NAMES, craftMinutes, missingInputs, nearStation, recipeById } from "../../shared/crafting.ts";
+import { craftOnce, fmtItems, pickupNear, placeItem } from "./crafting.ts";
+import { skillLevel } from "./skillsys.ts";
 
 const lastMoveAt = new Map<string, number>();
 
@@ -69,8 +72,8 @@ export function applyInput(w: World, p: Player, seq: number, dx: number, dy: num
 // Long actions
 // ---------------------------------------------------------------------------
 
-function startBusy(w: World, p: Player, kind: NonNullable<Player["busy"]>["kind"], label: string, durMs: number, item?: ItemId, tile?: { x: number; y: number }) {
-  p.busy = { kind, label, start: Date.now(), dur: durMs, item, tile };
+function startBusy(w: World, p: Player, kind: NonNullable<Player["busy"]>["kind"], label: string, durMs: number, item?: ItemId, tile?: { x: number; y: number }, extra: Partial<NonNullable<Player["busy"]>> = {}) {
+  p.busy = { kind, label, start: Date.now(), dur: durMs, item, tile, ...extra };
   w.selfChanged(p.id);
 }
 
@@ -92,6 +95,16 @@ function completeBusy(w: World, p: Player) {
       // keep gathering automatically while a resource remains in reach
       const next = resourceNear(w, p);
       if (p.energy > 3 && next && next.item === item) startBusy(w, p, "gather", b.label, gatherTime(p, item), item, next.tile);
+      break;
+    }
+    case "craft": {
+      const rec = recipeById(b.recipe ?? "");
+      if (!rec) break;
+      const r = craftOnce(w, p, rec);
+      if (!r.ok) { w.toast(p.id, r.reason ?? "Не вийшло", "bad"); break; }
+      w.toast(p.id, `Зроблено: ${ITEMS[rec.out].name}${rec.qty > 1 ? ` ×${rec.qty}` : ""}`, "good");
+      const left = (b.left ?? 1) - 1;
+      if (left > 0 && !Object.keys(missingInputs(p.inv, rec)).length) startCraft(w, p, rec.id, left);
       break;
     }
     case "eat":
@@ -134,6 +147,46 @@ function resourceNear(w: World, p: Player): { item: ItemId; tile?: { x: number; 
   }
   if (groundAt(w.map, p.x, p.y) === G.FIELD) return { item: "grain" };
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Crafting & building
+// ---------------------------------------------------------------------------
+
+/** Real ms per game minute of crafting for players (a bed ≈ 16 s for a novice). */
+const CRAFT_MS_PER_MIN = 400;
+
+function startCraft(w: World, p: Player, recipe: string, n: number) {
+  const rec = recipeById(recipe)!;
+  const ms = craftMinutes(rec, skillLevel(p, rec.skill)) * CRAFT_MS_PER_MIN;
+  startBusy(w, p, "craft", `Майструє: ${ITEMS[rec.out].name}${n > 1 ? ` (ще ${n})` : ""}`, ms, rec.out, undefined, { recipe, left: n });
+}
+
+export function playerCraft(w: World, p: Player, recipe: string, n: number) {
+  if (w.isJailed(p)) return w.toast(p.id, "За ґратами не помайструєш.", "bad");
+  const rec = recipeById(recipe);
+  if (!rec) return;
+  if (!nearStation(w.map, p.x, p.y, rec.station)) return w.toast(p.id, `Для цього потрібно бути біля: ${STATION_NAMES[rec.station]}.`, "bad");
+  const lack = missingInputs(p.inv, rec);
+  if (Object.keys(lack).length) return w.toast(p.id, `Бракує: ${fmtItems(lack)}.`, "bad");
+  if (p.energy < 2) return w.toast(p.id, "Ти надто втомлений. Відпочинь.", "bad");
+  startCraft(w, p, rec.id, Math.max(1, Math.min(20, Math.floor(n) || 1)));
+}
+
+export function playerPlace(w: World, p: Player, item: ItemId, x: number, y: number) {
+  if (w.isJailed(p) || !ITEMS[item] || !Number.isFinite(x) || !Number.isFinite(y)) return;
+  const r = placeItem(w, p, item, x, y);
+  if (!r.ok) return w.toast(p.id, r.reason ?? "Не можна", "bad");
+  trainSkill(w, p, "building", 0.15);
+  w.selfChanged(p.id);
+}
+
+export function playerPickup(w: World, p: Player) {
+  if (w.isJailed(p)) return;
+  const r = pickupNear(w, p);
+  if (!r.ok) return w.toast(p.id, r.reason ?? "Нічого", "bad");
+  w.toast(p.id, r.stolenFrom ? `Ти забрав ${ITEMS[r.item!].name.toLowerCase()} — це належало: ${r.stolenFrom}!` : `Розібрано: ${ITEMS[r.item!].name}`, r.stolenFrom ? "bad" : "good");
+  w.selfChanged(p.id);
 }
 
 export function playerAct(w: World, p: Player, a: "gather" | "eat" | "rest" | "pray" | "cancel" | "plant") {
@@ -185,7 +238,8 @@ export function playerAct(w: World, p: Player, a: "gather" | "eat" | "rest" | "p
       return w.toast(p.id, "Немає їжі. Купи на ринку або поїж у таверні.", "bad");
     }
     case "rest": {
-      if (!buildingAt(w.map, p.x, p.y) && !w.isJailed(p)) return w.toast(p.id, "Відпочивати безпечно лише в будівлі (таверна, храм, будинок).", "bad");
+      if (!buildingAt(w.map, p.x, p.y) && !w.isJailed(p) && !findObjNear(w.map, p.x, p.y, O.BED, 1.6))
+        return w.toast(p.id, "Відпочивати безпечно лише в будівлі (таверна, храм, будинок) або біля ліжка.", "bad");
       startBusy(w, p, "rest", "Відпочиває", 1e9);
       return;
     }

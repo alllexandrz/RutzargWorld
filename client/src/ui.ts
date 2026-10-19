@@ -2,6 +2,7 @@
 
 import type { BusinessInfo, DialogLine, DialogMsg, InspectInfo, MarketInfo, SelfState, ChronicleEntry } from "../../shared/protocol.ts";
 import { ITEMS, ITEM_IDS, type ItemId } from "../../shared/items.ts";
+import { RECIPES, STATION_NAMES, craftMinutes, nearStation, type Station } from "../../shared/crafting.ts";
 import { SKILLS, SKILL_IDS, skillRank, type SkillId } from "../../shared/skills.ts";
 import { INTERACT_RANGE } from "../../shared/constants.ts";
 import { getMap, areaContains, areaAt } from "../../shared/map.ts";
@@ -25,7 +26,7 @@ let inspectTimer: number | null = null;
 // Panels
 // ---------------------------------------------------------------------------
 
-const PANELS = ["panel-dialog", "panel-market", "panel-biz", "panel-inspect", "panel-chronicle", "panel-help", "panel-talklog", "panel-skills"];
+const PANELS = ["panel-dialog", "panel-market", "panel-biz", "panel-inspect", "panel-chronicle", "panel-help", "panel-talklog", "panel-skills", "panel-craft"];
 
 function openPanel(id: string) {
   const el = $(id);
@@ -82,7 +83,9 @@ function renderSelf(s: SelfState) {
   $("hud-hunger").textContent = String(s.hunger);
   $("hud-energy").textContent = String(s.energy);
   const inv = ITEM_IDS.filter((i) => (s.inv[i] ?? 0) > 0)
-    .map((i) => `<span class="chip" style="--c:${ITEMS[i].color}" title="${ITEMS[i].name}">${ITEMS[i].name} <b>${s.inv[i]}</b></span>`).join("");
+    .map((i) => ITEMS[i].obj !== undefined
+      ? `<span class="chip placeable" data-place="${i}" style="--c:${ITEMS[i].color}" title="${ITEMS[i].name} — клікни, щоб поставити">${ITEMS[i].name} <b>${s.inv[i]}</b></span>`
+      : `<span class="chip" style="--c:${ITEMS[i].color}" title="${ITEMS[i].name}">${ITEMS[i].name} <b>${s.inv[i]}</b></span>`).join("");
   $("inventory").innerHTML = inv || `<span class="muted">Сумка порожня</span>`;
   const busy = $("busy");
   if (s.busy) {
@@ -179,6 +182,44 @@ function renderSkills() {
   $("skills-body").innerHTML = `${skillRows(s?.skills ?? {}, true)}
     <p class="muted">Будь-яку навичку може опанувати будь-хто: вона росте, коли нею користуєшся (рубаєш дерева — лісорубство, добуваєш руду чи камінь — гірництво...).
     Вища навичка — швидша робота. Навичка ≥30 відкриває роботу поза своїм соціальним класом.</p>`;
+}
+
+// ---------------------------------------------------------------------------
+// Crafting (C) & building
+// ---------------------------------------------------------------------------
+
+const STATION_ORDER: Station[] = ["hand", "workbench", "forge", "anvil", "hearth"];
+const STATION_TITLES: Record<Station, string> = {
+  hand: "Руками — будь-де", workbench: "На верстаку", forge: "У горні", anvil: "На ковадлі", hearth: "На вогнищі",
+};
+const STATION_WHERE: Record<Station, string> = {
+  hand: "", workbench: "верстак є у Складі (або зроби свій)", forge: "горно — у кузні Ульфа", anvil: "ковадло — у кузні Ульфа", hearth: "вогнище — у таверні (або склади своє)",
+};
+
+function renderCraft() {
+  const s = state.self;
+  if (!s) return;
+  const inv = s.inv;
+  const html = STATION_ORDER.map((st) => {
+    const near = nearStation(map, state.myPos.x, state.myPos.y, st);
+    const rows = RECIPES.filter((r) => r.station === st).map((r) => {
+      const ins = (Object.entries(r.inputs) as [ItemId, number][]).map(([i, n]) => {
+        const have = inv[i] ?? 0;
+        return `<span class="${have < n ? "lack" : ""}">${ITEMS[i].name} ${have}/${n}</span>`;
+      }).join("");
+      const can = near && (Object.entries(r.inputs) as [ItemId, number][]).every(([i, n]) => (inv[i] ?? 0) >= n);
+      const secs = Math.round(craftMinutes(r, s.skills[r.skill]) * 0.4);
+      return `<div class="recipe ${can ? "" : "off"}">
+        <div><b>${ITEMS[r.out].name}</b>${r.qty > 1 ? ` ×${r.qty}` : ""} <span class="muted">· ${secs} с</span></div>
+        <div class="in">${ins}</div>
+        <div class="btns"><button data-craft="${r.id}" data-n="1" ${can ? "" : "disabled"}>Зробити</button><button data-craft="${r.id}" data-n="5" ${can ? "" : "disabled"}>×5</button></div>
+      </div>`;
+    }).join("");
+    const where = st === "hand" ? "" : near ? ` <span class="muted">· ти поруч ✓</span>` : ` <span class="muted">· ${STATION_WHERE[st]}</span>`;
+    return `<div class="craft-group">${STATION_TITLES[st]}${where}</div>${rows}`;
+  }).join("");
+  $("craft-body").innerHTML = `${html}<p class="muted">Матеріали — збором (F) або на ринку (M). Зроблене з позначкою в сумці можна поставити: клікни на нього. X — розібрати річ поруч.
+    Навичка ремесла (теслярство, ковальство, будівництво, кулінарія) пришвидшує роботу.</p>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -419,7 +460,7 @@ export function initUI() {
 
   net.on((m) => {
     switch (m.t) {
-      case "self": state.self = m.s; renderSelf(m.s); if (!$("panel-skills").hidden) renderSkills(); if (!$("panel-market").hidden && market) renderMarket(market); break;
+      case "self": state.self = m.s; renderSelf(m.s); if (!$("panel-skills").hidden) renderSkills(); if (!$("panel-craft").hidden) renderCraft(); if (!$("panel-market").hidden && market) renderMarket(market); break;
       case "toast": toast(m.text, m.kind); break;
       case "chat": chatLine(`<b class="pl">${esc(m.name)}:</b> ${esc(m.text)}`); break;
       case "say": {
@@ -510,6 +551,8 @@ export function initUI() {
       case "h": case "р": togglePanel("panel-help"); break;
       case "j": case "о": togglePanel("panel-talklog", renderTalklog); break;
       case "k": case "л": togglePanel("panel-skills", renderSkills); break;
+      case "c": case "с": togglePanel("panel-craft", renderCraft); break;
+      case "x": case "ч": net.send({ t: "pickup" }); break;
       case "escape": closeAll(); $("ctx").hidden = true; break;
     }
   });
@@ -530,6 +573,26 @@ export function initUI() {
 
   // keep-alive: while the dialog window is open the NPC keeps waiting for us
   setInterval(() => { if (dialog) net.send({ t: "talk", npcId: dialog.npcId, opt: "keep" }); }, 5000);
+  $("btn-craft").onclick = () => togglePanel("panel-craft", renderCraft);
+  $("btn-pickup").onclick = () => net.send({ t: "pickup" });
+  $("craft-body").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest("button[data-craft]") as HTMLButtonElement | null;
+    if (b) net.send({ t: "craft", recipe: b.dataset.craft!, n: Number(b.dataset.n) });
+  });
+  $("inventory").addEventListener("click", (e) => {
+    const chip = (e.target as HTMLElement).closest("[data-place]") as HTMLElement | null;
+    if (!chip) return;
+    closePanel("panel-craft");
+    bus.emit("build", chip.dataset.place as ItemId);
+  });
+  bus.on("buildHint", (text: string | null) => { $("build-hint").hidden = !text; $("build-hint").innerHTML = text ?? ""; });
+  // station proximity changes as we walk
+  let stationSig = "";
+  setInterval(() => {
+    if ($("panel-craft").hidden) return;
+    const sig = STATION_ORDER.map((st) => (nearStation(map, state.myPos.x, state.myPos.y, st) ? 1 : 0)).join("");
+    if (sig !== stationSig) { stationSig = sig; renderCraft(); }
+  }, 500);
   $("btn-talklog").onclick = () => togglePanel("panel-talklog", renderTalklog);
   $("btn-skills").onclick = () => togglePanel("panel-skills", renderSkills);
 

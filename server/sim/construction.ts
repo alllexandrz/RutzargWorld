@@ -11,11 +11,12 @@ import { learnFact, newFact, witness, addGoal } from "./social.ts";
 import { isChild, POPULATION_CAP } from "./family.ts";
 import { hasVacancy } from "./economy.ts";
 import { skillLevel, trainSkill } from "./skillsys.ts";
+import { bedPlanned, builderCrafts } from "./crafting.ts";
 
 type ProjectKind = "house" | "mine" | "quarry";
 const MATERIALS: Record<ProjectKind, Partial<Record<ItemId, number>>> = {
-  house: { wood: 25, stone: 20, tools: 1 },
-  mine: { wood: 30, stone: 10, tools: 2 },
+  house: { wood: 15, plank: 10, stone: 20, tools: 1, bed: 2 },
+  mine: { wood: 30, stone: 10, tools: 2, lamp: 1 },
   quarry: { wood: 15, tools: 1 },
 };
 /** Builder-hours at skill multiplier 1.0 */
@@ -50,6 +51,11 @@ export function homeAreas(w: World): string[] {
   return Object.values(w.map.areas)
     .filter((a) => a.building !== undefined && !NON_HOMES.has(a.id) && bedsIn(w.map, a.id) > 0)
     .map((a) => a.id);
+}
+
+/** Beds missing in a home (positive = overcrowded). */
+export function bedsShort(w: World, areaId: string): number {
+  return bedsUsed(w, areaId) - bedsIn(w.map, areaId);
 }
 
 function freeBeds(w: World, areaId: string): number {
@@ -120,7 +126,7 @@ export function estimateCost(w: World, kind: ProjectKind = "house"): number {
   return Math.round(c + (builders?.wage ?? 11) * WORK[kind] / 9 * 1.2);
 }
 
-function startProject(w: World, plotId: string, by: string) {
+export function startProject(w: World, plotId: string, by: string) {
   const plot = w.map.plots.find((x) => x.id === plotId)!;
   const kind = plot.kind;
   const p: ConstructionProject = {
@@ -223,6 +229,8 @@ function buyMaterials(w: World) {
   for (const [item, need] of Object.entries(p.required) as [ItemId, number][]) {
     const missing = need - (p.delivered[item] ?? 0);
     if (missing <= 0) continue;
+    // crafted materials the market doesn't have → a builder makes them
+    if (builderCrafts(w, item, missing, p.plotId)) continue;
     const qty = Math.min(missing, 6, w.marketStock(item));
     if (qty <= 0) continue;
     let cost = 0;
@@ -292,11 +300,12 @@ export function onHourHousing(w: World, hour: number) {
   if (hour !== 7) return;
   // 1) move people out of overcrowded homes into free beds
   for (const unit of housingNeeds(w)) {
+    if (bedPlanned(w, unit[0].home)) continue; // someone at home is making a bed — stay
     const to = findFreeHome(w, unit.length, unit[0].home);
     if (to && freeBeds(w, to) >= 1) moveUnit(w, unit, to, "у колишньому домі тісно");
   }
   // 2) still not enough beds → commission a house on the next free plot
-  const waiting = housingNeeds(w).length;
+  const waiting = housingNeeds(w).filter((u) => !bedPlanned(w, u[0].home)).length;
   if (waiting > 0 && !w.projects.some((x) => (x.kind ?? "house") === "house")) {
     const plot = w.map.plots.find((p) => p.kind === "house" && w.map.plotStage[p.id] === "empty" && !w.projects.some((x) => x.plotId === p.id));
     if (plot && w.townTreasury >= estimateCost(w) * 0.6) startProject(w, plot.id, "town");

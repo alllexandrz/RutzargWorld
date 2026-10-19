@@ -187,3 +187,15 @@ a.google { display: flex; align-items: center; justify-content: center; gap: 10p
 a.google:hover { background: #fff; }
 a.google .g { font-weight: bold; color: #4285f4; font-size: 18px; }
 #login-hint:empty, #login-err:empty { display: none; }
+
+/* ---- Crafting ---- */
+.craft-group { margin: 10px 0 4px; color: var(--gold, #d8b86a); font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; }
+.craft-group .muted { text-transform: none; letter-spacing: 0; }
+.recipe { display: grid; grid-template-columns: minmax(130px, 1fr) 2fr auto; gap: 8px; align-items: center; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; margin: 4px 0; }
+.recipe .in span { margin-right: 8px; white-space: nowrap; }
+.recipe .in .lack { color: #e07a6a; }
+.recipe .btns { display: flex; gap: 4px; }
+.recipe.off { opacity: 0.55; }
+#inventory .chip.placeable { cursor: pointer; text-decoration: underline dotted; }
+#build-hint { position: absolute; left: 50%; top: 70px; transform: translateX(-50%); padding: 6px 14px; z-index: 30; }
+@media (max-width: 640px) { .recipe { grid-template-columns: 1fr; } }

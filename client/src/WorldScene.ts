@@ -1,7 +1,8 @@
 // Main Phaser scene: isometric world rendering, entities, input, client-side prediction.
 
 import Phaser from "phaser";
-import { getMap, G, O, MAP_W, MAP_H, idx, applyPlot, setTile, type Building } from "../../shared/map.ts";
+import { getMap, G, O, MAP_W, MAP_H, idx, applyPlot, setTile, canPlaceAt, type Building } from "../../shared/map.ts";
+import { ITEMS, type ItemId } from "../../shared/items.ts";
 import { tileNoise } from "../../shared/rng.ts";
 import { stepMove, screenDirToWorld } from "../../shared/move.ts";
 import { findPath } from "../../shared/path.ts";
@@ -167,6 +168,93 @@ export class WorldScene extends Phaser.Scene {
 
     this.scene.launch("overlay");
     bus.on("walkTo", (x: number, y: number) => this.walkTo(x, y));
+    bus.on("build", (item: ItemId) => this.startBuild(item));
+    this.input.on("pointermove", (p: Phaser.Input.Pointer) => this.updateGhost(p));
+    this.input.keyboard!.on("keydown-ESC", () => this.stopBuild());
+  }
+
+  // ---------------------------------------------------------------------------
+  // Build mode: put a placeable item from the bag onto a tile
+  // ---------------------------------------------------------------------------
+
+  private build: { item: ItemId; ghost: Phaser.GameObjects.Image; tile: { x: number; y: number } | null; ok: boolean; reason: string } | null = null;
+
+  /** Texture key + placement of an object's sprite on its tile (matches buildTile). */
+  private objSprite(o: number): { key: string; oy: number; origin: [number, number] } {
+    const wall = (wood: boolean) => cubeTex(this, wood ? "pwall_wood" : "pwall_stone", WALL_H - 10, wood
+      ? { top: "#8a6038", left: "#7a5432", right: "#5a3c22", beams: true }
+      : { top: "#9a9286", left: "#8a8276", right: "#666058" });
+    switch (o) {
+      case O.WALL_WOOD: return { key: wall(true), oy: -(WALL_H - 10) - TH / 2, origin: [0.5, 0] };
+      case O.WALL_STONE: return { key: wall(false), oy: -(WALL_H - 10) - TH / 2, origin: [0.5, 0] };
+      case O.LAMP: return { key: "lamp", oy: 4, origin: [0.5, 0.92] };
+      default: {
+        const keys: Record<number, string> = {
+          [O.BED]: "bed", [O.TABLE]: "table", [O.BENCH]: "bench", [O.CRATE]: "crate", [O.BARREL]: "barrel", [O.FENCE]: "fence",
+          [O.WORKBENCH]: "workbench", [O.FORGE]: "forge", [O.ANVIL]: "anvil", [O.HEARTH]: "hearth", [O.WELL]: "well",
+        };
+        return { key: keys[o] ?? "crate", oy: 4, origin: [0.5, 0.84] };
+      }
+    }
+  }
+
+  startBuild(item: ItemId) {
+    this.stopBuild();
+    const def = ITEMS[item];
+    if (def.obj === undefined || !(state.self?.inv[item] ?? 0)) return;
+    const sp = this.objSprite(def.obj);
+    const ghost = this.add.image(0, 0, sp.key).setOrigin(...sp.origin).setAlpha(0.65).setVisible(false).setDepth(1e7);
+    this.build = { item, ghost, tile: null, ok: false, reason: "" };
+    this.clickPath = null;
+    this.buildHint();
+  }
+
+  stopBuild() {
+    if (!this.build) return;
+    this.build.ghost.destroy();
+    this.build = null;
+    bus.emit("buildHint", null);
+  }
+
+  private buildHint() {
+    const b = this.build;
+    if (!b) return;
+    const n = state.self?.inv[b.item] ?? 0;
+    const why = b.tile && !b.ok ? ` · <span class="bad">${b.reason}</span>` : "";
+    bus.emit("buildHint", `Ставиш: <b>${ITEMS[b.item].name}</b> (${n}) · клік — поставити · ПКМ / Esc — скасувати${why}`);
+  }
+
+  private updateGhost(p: Phaser.Input.Pointer) {
+    const b = this.build;
+    if (!b) return;
+    const wp = this.cameras.main.getWorldPoint(p.x, p.y);
+    const w = toWorld(wp.x, wp.y);
+    const tx = Math.floor(w.x), ty = Math.floor(w.y);
+    if (b.tile && b.tile.x === tx && b.tile.y === ty) return;
+    b.tile = { x: tx, y: ty };
+    const obj = ITEMS[b.item].obj!;
+    const can = canPlaceAt(this.map, tx, ty, obj);
+    b.ok = can.ok;
+    b.reason = can.reason ?? "";
+    const s = toScreen(tx, ty);
+    const sp = this.objSprite(obj);
+    b.ghost.setPosition(s.x, s.y + TH / 2 + sp.oy).setVisible(true).setTint(can.ok ? 0x99ff99 : 0xff7766);
+    this.buildHint();
+  }
+
+  /** Returns true if the click was consumed by build mode. */
+  private buildClick(p: Phaser.Input.Pointer): boolean {
+    const b = this.build;
+    if (!b) return false;
+    if (p.rightButtonDown()) { this.stopBuild(); return true; }
+    this.updateGhost(p);
+    if (!b.tile || !b.ok) return true;
+    const far = Math.hypot(b.tile.x + 0.5 - this.myPos.x, b.tile.y + 0.5 - this.myPos.y) > 2.4;
+    if (far) { this.walkTo(b.tile.x + 0.5, b.tile.y + 1.5); return true; }
+    net.send({ t: "place", item: b.item, x: b.tile.x, y: b.tile.y });
+    if ((state.self?.inv[b.item] ?? 0) <= 1) this.stopBuild();
+    else { b.tile = null; }
+    return true;
   }
 
   // ---------------------------------------------------------------------------
@@ -347,6 +435,16 @@ export class WorldScene extends Phaser.Scene {
       case O.SCAFFOLD: img(cx, cy + 4, "scaffold").setOrigin(0.5, 0.9).setDepth(depth); break;
       case O.STUMP: img(cx, cy + 4, "stump").setOrigin(0.5, 0.8).setDepth(depth - 2); break;
       case O.SAPLING: img(cx, cy + 4, "sapling").setOrigin(0.5, 0.9).setDepth(depth); break;
+      case O.WORKBENCH: img(cx, cy + 4, "workbench").setOrigin(0.5, 0.82).setDepth(depth); break;
+      case O.WALL_WOOD:
+      case O.WALL_STONE: {
+        const wood = o === O.WALL_WOOD;
+        const key = cubeTex(this, wood ? "pwall_wood" : "pwall_stone", WALL_H - 10, wood
+          ? { top: "#8a6038", left: "#7a5432", right: "#5a3c22", beams: true }
+          : { top: "#9a9286", left: "#8a8276", right: "#666058" });
+        img(s.x, s.y - (WALL_H - 10), key).setOrigin(0.5, 0).setDepth(depth);
+        break;
+      }
       default: break;
     }
     if (map.ground[i] === G.WATER && tileNoise(tx, ty, 2) < 0.15) {
@@ -430,6 +528,7 @@ export class WorldScene extends Phaser.Scene {
 
   private onPointer(p: Phaser.Input.Pointer) {
     if (!p.leftButtonDown() && !p.rightButtonDown()) return;
+    if (this.buildClick(p)) return;
     const wp = this.cameras.main.getWorldPoint(p.x, p.y);
     // Entity hit test (sprites stand ~40px above their feet)
     let hit: EntityView | null = null, best = 30;

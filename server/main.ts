@@ -19,7 +19,7 @@ import { accountFromSession, authConfig, handleAuth } from "./auth.ts";
 import type { C2S, S2C, EntSnap, SelfState, BusinessInfo, InspectInfo, Look } from "../shared/protocol.ts";
 import { GAME_MINUTES_PER_SECOND, SERVER_TICK_HZ, SNAPSHOT_HZ } from "../shared/constants.ts";
 import { ITEM_IDS, ITEMS, marketBuyPrice, marketPrice } from "../shared/items.ts";
-import { applyInput, createPlayer, playerAct, playerBiz, playerMarket, playerPickpocket, resetPlayerOnJoin } from "./sim/players.ts";
+import { applyInput, createPlayer, playerAct, playerBiz, playerCraft, playerMarket, playerPickpocket, playerPickup, playerPlace, resetPlayerOnJoin } from "./sim/players.ts";
 import { playerTalk } from "./sim/dialogue.ts";
 import { ownerName } from "./sim/economy.ts";
 import { CLASS_NAMES, FACTION_NAMES, type Player } from "./sim/types.ts";
@@ -244,6 +244,9 @@ function handle(s: Session, m: C2S) {
     case "inspect": { const info = inspect(m.id); if (info) send(s, { t: "inspect", info }); break; }
     case "chronicle": send(s, { t: "chronicle", entries: world.chronicle.slice(-120) }); break;
     case "pickpocket": playerPickpocket(world, p, m.npcId); break;
+    case "craft": playerCraft(world, p, String(m.recipe), Number(m.n ?? 1)); break;
+    case "place": playerPlace(world, p, m.item, Number(m.x), Number(m.y)); break;
+    case "pickup": playerPickup(world, p); break;
   }
 }
 

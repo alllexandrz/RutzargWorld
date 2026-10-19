@@ -53,15 +53,21 @@ docker compose exec ollama ollama pull gemma3:4b
 - `state` OAuth перевіряється через HttpOnly-cookie, у ID-токені Google перевіряються `aud`, `iss` і `exp`;
 - є обмеження частоти спроб входу.
 
-## HTTPS і домен
+## HTTPS і домен (nginx)
 
-Для гри через інтернет постав перед `game` реверс-проксі з TLS (Caddy, nginx, Traefik). WebSocket іде тим самим портом за шляхом `/ws`, а клієнт сам переходить на `wss://` на https-сторінці. Найпростіше — Caddy:
+Гра в Docker слухає лише `127.0.0.1:8787` (`GAME_BIND`), а назовні її віддає nginx на хості з TLS. Готовий конфіг: [`deploy/nginx/rutzarg.conf`](../deploy/nginx/rutzarg.conf) (HTTP→HTTPS, WebSocket `/ws`, gzip, обмеження частоти для входу).
 
+```bash
+sudo cp deploy/nginx/rutzarg.conf /etc/nginx/sites-available/rutzarg.conf
+sudo sed -i 's/rutzarg.example.com/game.mydomain.com/g' /etc/nginx/sites-available/rutzarg.conf
+sudo ln -s /etc/nginx/sites-available/rutzarg.conf /etc/nginx/sites-enabled/
+sudo certbot --nginx -d game.mydomain.com     # сертифікат Let's Encrypt
+sudo nginx -t && sudo systemctl reload nginx
 ```
-rutzarg.example.com {
-  reverse_proxy 127.0.0.1:8787
-}
-```
+
+У `.env`: `PUBLIC_URL=https://game.mydomain.com`. Він потрібен для redirect URI Google.
+
+Якщо сертифіката ще немає, `nginx -t` скаржиться на відсутні файли в `/etc/letsencrypt/live/...`. Тоді спершу тимчасово закоментуй блок `server { listen 443 ... }`, перезавантаж nginx, запусти `certbot --nginx -d <домен>` і поверни блок.
 
 ## Оновлення
 

@@ -313,6 +313,15 @@ function makeProps(scene: Phaser.Scene) {
     c.fillStyle = "#5a3a20"; c.fillRect(18, 26, 3, 8); c.fillRect(43, 26, 3, 8);
     c.fillStyle = "#7a5230"; c.beginPath(); c.moveTo(12, 26); c.lineTo(36, 14); c.lineTo(52, 22); c.lineTo(28, 34); c.closePath(); c.fill();
   });
+  P("workbench", 64, 56, (c) => {
+    shadow(c, 32, 46, 22, 8);
+    c.fillStyle = "#5a3a20"; c.fillRect(14, 30, 3, 14); c.fillRect(47, 30, 3, 14); c.fillRect(30, 36, 3, 14);
+    c.fillStyle = "#a07040"; c.beginPath(); c.moveTo(8, 30); c.lineTo(32, 18); c.lineTo(56, 30); c.lineTo(32, 42); c.closePath(); c.fill();
+    c.fillStyle = "#7a5230"; c.beginPath(); c.moveTo(8, 30); c.lineTo(32, 42); c.lineTo(32, 46); c.lineTo(8, 34); c.closePath(); c.fill();
+    c.fillStyle = "#5a5a64"; c.fillRect(20, 24, 10, 3); // saw
+    c.fillStyle = "#3a2a1a"; c.fillRect(36, 26, 8, 3); // plane
+    c.fillStyle = "#d8c8a0"; c.fillRect(26, 30, 12, 2); // shavings
+  });
   P("forge", 64, 72, (c) => {
     c.fillStyle = "#4a4240"; c.beginPath(); c.moveTo(8, 36); c.lineTo(32, 24); c.lineTo(56, 36); c.lineTo(56, 56); c.lineTo(32, 68); c.lineTo(8, 56); c.closePath(); c.fill();
     c.fillStyle = "#3a3230"; c.fillRect(24, 4, 16, 28);

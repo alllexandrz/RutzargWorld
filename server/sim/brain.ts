@@ -13,10 +13,11 @@ import { areaContains, doorOutside, randomSpotIn } from "../../shared/map.ts";
 import { facingFromDir } from "../../shared/move.ts";
 import { hourOf, isHourBetween, dayOf } from "../../shared/time.ts";
 import { addGoal, adjustRel, attitude, canSee, learnFact, newFact, rel, removeGoal, witness, factText } from "./social.ts";
-import { buyBusiness, buyMeal, hasVacancy, hire, leaveJob, marketBuy, mealPrice, ownerPerson } from "./economy.ts";
+import { buyBusiness, buyMeal, canAffordHire, hasVacancy, hire, leaveJob, marketBuy, mealPrice, ownerPerson } from "./economy.ts";
 import { llmEnabled, llmJson } from "../ai/llm.ts";
 import { canWorkAt, SKILL_OF, skillLevel } from "./skillsys.ts";
 import { familySummary, isChild, isInfant, isWeddingHours, tryWedding, weddingReady } from "./family.ts";
+import { doCraft } from "./crafting.ts";
 
 const JAIL_MINUTES = 6 * 60;
 
@@ -24,14 +25,14 @@ const JAIL_MINUTES = 6 * 60;
 // Movement
 // ---------------------------------------------------------------------------
 
-function goTo(w: World, a: Agent, x: number, y: number): boolean {
+export function goTo(w: World, a: Agent, x: number, y: number): boolean {
   const p = findPath(w.map, a, { x, y });
   if (!p) return false;
   a.path = p;
   return true;
 }
 
-function goToArea(w: World, a: Agent, areaId: string): boolean {
+export function goToArea(w: World, a: Agent, areaId: string): boolean {
   const area = w.map.areas[areaId];
   if (!area) return false;
   if (areaContains(area, a.x, a.y) && !a.path) return true;
@@ -186,6 +187,15 @@ function evaluateOptions(w: World, a: Agent): Option[] {
   if (evening) opts.push({ type: "socialize", label: "відпочиває в таверні", score: 0.4 + p.sociability * 0.3 + lonely * 0.3, data: { area: "tavern" } });
   else if (!night) opts.push({ type: "socialize", label: "пліткує на ринку", score: 0.1 + p.sociability * 0.2 + lonely * 0.25, data: { area: "market" } });
 
+  // Something to make (a bed for the family, materials for a build, goods to sell...)
+  if (a.craftPlan) {
+    const pl = a.craftPlan;
+    const onShift = job && h >= job.workHours[0] && h < job.workHours[1];
+    // builders' tasks are their work; private plans wait until after the shift
+    const score = pl.payer === "guild" ? (onShift ? pl.priority : 0.2) : onShift ? pl.priority * 0.5 : pl.priority;
+    opts.push({ type: "craft", label: pl.label, score: score * (night ? 0.2 : 1) });
+  }
+
   // Goal-driven options
   for (const g of a.goals) {
     if (g.id.startsWith("wedding:")) {
@@ -253,7 +263,7 @@ function evaluateOptions(w: World, a: Agent): Option[] {
 function findVacancy(w: World, a: Agent): Business | null {
   let best: Business | null = null, bestScore = -Infinity;
   for (const b of w.businesses.values()) {
-    if (!hasVacancy(b) || !canWorkAt(b, a)) continue;
+    if (!hasVacancy(b) || !canWorkAt(b, a) || !canAffordHire(w, b)) continue;
     const owner = ownerPerson(b);
     const sk = SKILL_OF[b.kind];
     // People prefer work they're good at (their skill makes them more productive and respected).
@@ -265,6 +275,8 @@ function findVacancy(w: World, a: Agent): Business | null {
 
 function startActivity(w: World, a: Agent, o: Option) {
   const prevType = a.activity.type;
+  // leaving the workbench half-way loses the unfinished piece of work (materials are kept)
+  if (o.type !== "craft" && a.craftPlan?.busyUntil !== undefined) { a.craftPlan.busyUntil = undefined; a.craftPlan.busyRecipe = undefined; }
   setActivity(w, a, o.type, o.label, o.data);
   a.anim = "idle";
   switch (o.type) {
@@ -390,6 +402,7 @@ function updateActivity(w: World, a: Agent) {
     case "give": doGive(w, a); break;
     case "borrow": doBorrow(w, a); break;
     case "buy_business": doBuyBusiness(w, a); break;
+    case "craft": doCraft(w, a); break;
     case "wedding":
       if (!inArea(w, a, "temple")) { goToArea(w, a, "temple"); break; }
       a.anim = "idle";

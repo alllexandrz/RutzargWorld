@@ -50,6 +50,9 @@ export const O = {
   SCAFFOLD: 24, // construction scaffolding (non-blocking)
   STUMP: 25, // felled tree (non-blocking; a sapling can be planted here)
   SAPLING: 26, // young tree, grows into a TREE
+  WALL_WOOD: 27, // free-standing wall built by someone (crafted)
+  WALL_STONE: 28,
+  WORKBENCH: 29, // crafting station for wooden things
 } as const;
 
 /** Resource units a natural object holds before it is exhausted. */
@@ -59,7 +62,12 @@ export type ObjId = (typeof O)[keyof typeof O];
 const BLOCKING = new Set<number>([
   O.WALL, O.TOWN_WALL, O.TREE, O.ROCK, O.ORE_ROCK, O.BARS, O.TABLE, O.COUNTER, O.BED,
   O.ANVIL, O.ALTAR, O.CRATE, O.STALL, O.BARREL, O.WELL, O.PILLAR, O.FENCE, O.LOGS, O.FORGE, O.HEARTH,
+  O.WALL_WOOD, O.WALL_STONE, O.WORKBENCH,
 ]);
+
+export function isBlockingObj(o: number): boolean {
+  return BLOCKING.has(o);
+}
 
 export type BuildingKind =
   | "tavern" | "temple" | "smithy" | "warehouse" | "residence" | "house";
@@ -450,6 +458,7 @@ function buildMap(): GameMap {
   const warehouse = addBuilding("warehouse", "Склад", "warehouse", 5, 28, 8, 7, { x: 12, y: 31 }, "#6e5b45", "#5a4a3a");
   for (const [cx, cy] of [[6, 29], [7, 29], [6, 30], [10, 29], [10, 33], [6, 33], [7, 33]]) setO(cx, cy, O.CRATE);
   setO(9, 31, O.BARREL);
+  setO(8, 33, O.WORKBENCH); // public workbench (anyone may craft here)
   for (let x = 13; x < 21; x++) setG(x, 31, G.DIRT);
 
   const residence = addBuilding("residence", "Резиденція старости", "residence", 30, 33, 12, 11, { x: 35, y: 33 }, "#7f6f5f", "#5b2e2e", G.FLOOR_STONE);
@@ -645,9 +654,72 @@ export function setTile(map: GameMap, x: number, y: number, ground: number | nul
   const i = idx(x, y);
   const g = ground ?? map.ground[i];
   if (map.ground[i] === g && map.obj[i] === obj) return false;
+  const old = map.obj[i];
   map.ground[i] = g;
   map.obj[i] = obj;
+  // Light sources come and go with the objects that emit them (placed lamps, dismantled hearths...).
+  if (old !== obj) {
+    if (isLightObj(old)) map.lights = map.lights.filter((l) => Math.abs(l.x - (x + 0.5)) > 0.9 || Math.abs(l.y - (y + 0.5)) > 0.9);
+    if (isLightObj(obj)) map.lights.push(lightFor(obj, x, y));
+  }
   return true;
+}
+
+function lightFor(o: number, x: number, y: number): GameMap["lights"][number] {
+  if (o === O.FORGE) return { x: x + 0.5, y: y + 0.5, r: 4.5, color: "255,120,40" };
+  if (o === O.HEARTH) return { x: x + 0.5, y: y + 0.5, r: 4.5, color: "255,150,70" };
+  return { x: x + 0.5, y: y + 0.5, r: 4.5, color: "255,180,100" };
+}
+
+/**
+ * Can an object be put on this tile? Shared by the client (build-mode preview) and the server
+ * (authoritative). Ownership of buildings is checked by the server separately.
+ */
+export function canPlaceAt(map: GameMap, x: number, y: number, obj: number): { ok: boolean; reason?: string } {
+  if (!inBounds(x, y)) return { ok: false, reason: "За межами світу" };
+  const i = idx(x, y);
+  if (map.obj[i] !== O.NONE) return { ok: false, reason: "Тут уже щось стоїть" };
+  const g = map.ground[i];
+  if (g === G.WATER) return { ok: false, reason: "На воді не поставиш" };
+  for (const p of map.plots) {
+    if (map.plotStage[p.id] === "built") continue;
+    if (x >= p.x - 1 && y >= p.y - 1 && x <= p.x + p.w && y <= p.y + p.h) return { ok: false, reason: "Ділянка під забудову" };
+  }
+  if (BLOCKING.has(obj)) {
+    if (g === G.COBBLE) return { ok: false, reason: "Не можна перегороджувати дорогу" };
+    for (const b of map.buildings) {
+      if (map.plots.some((p) => p.buildingId === b.id && map.plotStage[p.id] !== "built")) continue;
+      const out = doorOutside(b);
+      if (Math.abs(b.door.x - x) + Math.abs(b.door.y - y) <= 1 || Math.abs(out.x - x) + Math.abs(out.y - y) <= 1)
+        return { ok: false, reason: "Не можна закривати двері" };
+    }
+    if (map.bld[i] >= 0 && !interiorStaysConnected(map, map.buildings[map.bld[i]], x, y))
+      return { ok: false, reason: "Так у кімнаті не буде проходу" };
+  }
+  return { ok: true };
+}
+
+/** After blocking (x,y), can every free interior tile still be reached from the door? */
+function interiorStaysConnected(map: GameMap, b: Building, bx: number, by: number): boolean {
+  const free = (x: number, y: number) =>
+    x >= b.x && y >= b.y && x < b.x + b.w && y < b.y + b.h && !(x === bx && y === by) &&
+    (map.obj[idx(x, y)] === O.NONE || !BLOCKING.has(map.obj[idx(x, y)]));
+  let total = 0;
+  for (let y = b.y + 1; y < b.y + b.h - 1; y++) for (let x = b.x + 1; x < b.x + b.w - 1; x++) if (free(x, y)) total++;
+  const seen = new Set<number>([idx(b.door.x, b.door.y)]);
+  const q = [[b.door.x, b.door.y]];
+  let reached = 0;
+  while (q.length) {
+    const [x, y] = q.pop()!;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx, ny = y + dy, k = idx(nx, ny);
+      if (seen.has(k) || !free(nx, ny)) continue;
+      seen.add(k);
+      if (nx > b.x && ny > b.y && nx < b.x + b.w - 1 && ny < b.y + b.h - 1) reached++;
+      q.push([nx, ny]);
+    }
+  }
+  return reached >= total;
 }
 
 /** Can a sapling be planted on this tile? */

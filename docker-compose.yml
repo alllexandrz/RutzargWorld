@@ -44,7 +44,9 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       ALLOW_GUESTS: ${ALLOW_GUESTS:-0}
     ports:
-      - "${GAME_PORT:-8787}:8787"
+      # Bound to localhost: the public entry is nginx (deploy/nginx/rutzarg.conf).
+      # Docker-published ports bypass ufw, so don't expose 0.0.0.0 on a public server.
+      - "${GAME_BIND:-127.0.0.1}:${GAME_PORT:-8787}:8787"
     stop_grace_period: 20s # time to write the final world snapshot
 
   # Optional local LLM for NPC reasoning/dialogue. CPU works but is slow; on a Linux server with an

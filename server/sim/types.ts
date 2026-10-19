@@ -76,7 +76,7 @@ export interface Memory {
 export type ActivityType =
   | "idle" | "go" | "work" | "eat" | "sleep" | "socialize" | "wander" | "seek_job"
   | "steal" | "arrest" | "report" | "collect_debt" | "buy_business" | "jail" | "pray" | "give" | "talk_player" | "borrow"
-  | "wedding" | "play" | "date";
+  | "wedding" | "play" | "date" | "craft";
 
 export interface Activity {
   type: ActivityType;
@@ -155,6 +155,31 @@ export interface Agent extends Being {
   flags: Record<string, number>;
   /** Klumnogi only: whom they have blessed. */
   blessed?: string[];
+  /** Something this NPC has decided to make (bed for the family, a lamp for the town...). */
+  craftPlan?: CraftPlan | null;
+}
+
+/** What an NPC does with the thing once it is made. */
+export type CraftUse =
+  | { kind: "place"; x: number; y: number; area?: string }
+  | { kind: "deliver"; project: string }
+  | { kind: "sell" }
+  | { kind: "keep" };
+
+export interface CraftPlan {
+  item: ItemId;
+  qty: number;
+  use: CraftUse;
+  /** Who pays for bought materials: the NPC or the builders' guild. */
+  payer: "self" | "guild";
+  /** Shown to observers ("майструє ліжко для родини"). */
+  label: string;
+  priority: number;
+  started: number;
+  /** Crafting step in progress: recipe id and game minute it finishes. */
+  busyRecipe?: string;
+  busyUntil?: number;
+  fails?: number;
 }
 
 export interface Player extends Being {
@@ -166,7 +191,7 @@ export interface Player extends Being {
   lastInputSeq: number;
   moveDir: { x: number; y: number };
   inputBudget: number;
-  busy: { kind: "gather" | "eat" | "rest" | "pray"; label: string; start: number; dur: number; item?: ItemId; tile?: { x: number; y: number } } | null;
+  busy: { kind: "gather" | "eat" | "rest" | "pray" | "craft"; label: string; start: number; dur: number; item?: ItemId; tile?: { x: number; y: number }; recipe?: string; left?: number } | null;
   ownedBusinesses: string[];
   blessing: boolean;
   /** Real-time ms of the last dialogue reward (anti-spam). */
@@ -205,6 +230,10 @@ export interface Business {
   /** Fractional production carried over between hours. */
   carry?: number;
   lastShortageDay?: number;
+  /** Smoothed daily margin (sales minus purchases), measured before payroll. */
+  income?: number;
+  /** Treasury right after the previous payroll — the baseline for measuring income. */
+  treasuryMark?: number;
 }
 
 /** A house under construction (world state; the map is updated via shared applyPlot). */

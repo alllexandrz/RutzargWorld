@@ -12,7 +12,8 @@ import { tickNeeds } from "./needs.ts";
 import { tickPlayers } from "./players.ts";
 import { tickSocial } from "./social.ts";
 import { onHourFamily, tickFamily } from "./family.ts";
-import { onDayHousing, onHourHousing } from "./construction.ts";
+import { bedsShort, onDayHousing, onHourHousing } from "./construction.ts";
+import { onHourCrafting } from "./crafting.ts";
 import { initialResources, onHourResources, type ResourceState } from "./resources.ts";
 
 export type WorldListener = {
@@ -142,6 +143,7 @@ export class World {
       this.lastHour = hour;
       onHour(this, hour % 24);
       onHourFamily(this, hour % 24);
+      onHourCrafting(this, hour % 24, (h) => bedsShort(this, h));
       onHourHousing(this, hour % 24);
       onHourResources(this);
     }

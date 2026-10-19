@@ -4,6 +4,7 @@
 
 import type { World } from "./world.ts";
 import type { Business } from "./types.ts";
+import type { ItemId } from "../../shared/items.ts";
 import { G, O, RESOURCE_AMOUNT, canPlant, idx, inBounds, setTile, MAP_W } from "../../shared/map.ts";
 
 export const SAPLING_GROW_DAYS = 3;
@@ -21,12 +22,14 @@ export interface ResourceState {
   regrow: Record<number, { at: number; obj: number }>;
   /** Underground deposits (mines/quarries): id → remaining units. */
   deposits: Record<string, number>;
+  /** Things people have put down: tile index → item and who owns it ("town" for municipal). */
+  placed: Record<number, { item: ItemId; by: string }>;
 }
 
 export function initialResources(w: World): ResourceState {
   const deposits: Record<string, number> = { karg_ore: 800, karg_stone: 1000 };
   for (const p of w.map.plots) if (p.amount) deposits[p.id] = p.amount;
-  return { amounts: {}, overrides: {}, saplings: {}, regrow: {}, deposits };
+  return { amounts: {}, overrides: {}, saplings: {}, regrow: {}, deposits, placed: {} };
 }
 
 /** Change a tile on the authoritative map, remember it for persistence and queue it for clients. */

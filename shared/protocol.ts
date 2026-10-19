@@ -155,6 +155,12 @@ export type C2S =
   | { t: "inspect"; id: string }
   | { t: "chronicle" }
   | { t: "pickpocket"; npcId: string }
+  /** Craft `n` batches of a recipe (shared/crafting.ts). */
+  | { t: "craft"; recipe: string; n?: number }
+  /** Put a placeable item from the inventory on a tile. */
+  | { t: "place"; item: ItemId; x: number; y: number }
+  /** Dismantle the nearest placed thing and take it. */
+  | { t: "pickup" }
   | { t: "ping"; ts: number };
 
 // ---- Server -> Client ----

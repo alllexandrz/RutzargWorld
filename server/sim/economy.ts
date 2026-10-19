@@ -115,6 +115,15 @@ export function hasVacancy(b: Business): boolean {
   return b.workers.length < b.maxWorkers && b.ownerId !== null;
 }
 
+/** An NPC owner only takes on a worker they can pay (cash + purse for a few days, or steady income). */
+export function canAffordHire(w: World, b: Business): boolean {
+  const owner = b.ownerId && b.ownerId !== "town" ? w.agents.get(b.ownerId) : undefined;
+  if (!owner) return true;
+  const paid = b.workers.filter((id) => id !== b.ownerId).length;
+  const reserves = b.treasury + Math.max(0, owner.coins - OWNER_RESERVE);
+  return reserves >= b.wage * (paid + 1) * 3 || (b.income ?? 0) >= b.wage * (paid + 1);
+}
+
 export function hire(w: World, b: Business, worker: Being) {
   if (worker.jobBiz && worker.jobBiz !== b.id) leaveJob(w, worker, "quit");
   if (!b.workers.includes(worker.id)) b.workers.push(worker.id);
@@ -268,9 +277,13 @@ export function onHour(w: World, hour: number) {
 
   if (hour === 18) {
     for (const b of w.businesses.values()) sellOutput(w, b);
+    for (const b of w.businesses.values()) measureIncome(b);
     for (const b of w.businesses.values()) payroll(w, b);
   }
-  if (hour === 19) for (const b of w.businesses.values()) ownerProfit(w, b);
+  if (hour === 19) {
+    for (const b of w.businesses.values()) ownerProfit(w, b);
+    for (const b of w.businesses.values()) b.treasuryMark = b.treasury;
+  }
   if (hour === 9) {
     // tavern restocks grain in the morning
     const t = w.businesses.get("tavern")!;
@@ -327,14 +340,32 @@ function sellOutput(w: World, b: Business) {
   }
 }
 
+function measureIncome(b: Business) {
+  if (b.treasuryMark === undefined) return;
+  const today = b.treasury - b.treasuryMark;
+  b.income = b.income === undefined ? today : Math.round(b.income * 0.6 + today * 0.4);
+}
+
+/** Coins an NPC owner keeps for themselves before putting private money into the business. */
+const OWNER_RESERVE = 15;
+const WAGE_FLOOR = 6;
+
 function payroll(w: World, b: Business) {
   const payees = b.workers.filter((id) => !isOwnerWorker(b, id) && (b.hoursWorked[id] ?? 0) >= 3);
-  if (b.ownerId === "town") {
-    const need = payees.length * b.wage - b.treasury;
-    if (need > 0) {
-      const give = Math.min(need, w.townTreasury);
-      w.townTreasury -= give;
+  const need = payees.length * b.wage - b.treasury;
+  if (b.ownerId === "town" && need > 0) {
+    const give = Math.min(need, w.townTreasury);
+    w.townTreasury -= give;
+    b.treasury += give;
+  }
+  // An NPC owner covers a shortfall from their own purse rather than stiffing the workers.
+  const oa = b.ownerId && b.ownerId !== "town" ? w.agents.get(b.ownerId) : undefined;
+  if (oa && need > 0) {
+    const give = Math.min(need, Math.max(0, oa.coins - OWNER_RESERVE));
+    if (give > 0) {
+      oa.coins -= give;
       b.treasury += give;
+      w.log(`${oa.name} докладає ${give} срібла власних грошей на платню в «${b.name}».`, "economy");
     }
   }
   for (const id of payees) {
@@ -381,6 +412,36 @@ function ownerProfit(w: World, b: Business) {
   }
 }
 
+/**
+ * NPC owners look at the books once a day: if wages eat more than the business earns and
+ * the reserves (cash + owner's purse) won't last, they cut wages, and at the floor lay someone off.
+ */
+function manageStaff(w: World, b: Business) {
+  const owner = b.ownerId ? w.agents.get(b.ownerId) : undefined;
+  if (!owner || b.income === undefined) return;
+  const paid = b.workers.filter((id) => id !== b.ownerId);
+  if (!paid.length) return;
+  const cost = paid.length * b.wage;
+  const reserves = b.treasury + Math.max(0, owner.coins - OWNER_RESERVE);
+  const longUnpaid = paid.some((id) => (b.unpaidDays[id] ?? 0) >= 2);
+  const losing = cost > b.income + 2;
+  if (!longUnpaid && !losing) return;
+  // Losing money: trim wages a step a day; lay off only when reserves won't carry the payroll.
+  if (b.wage > WAGE_FLOOR && !longUnpaid) {
+    b.wage = Math.max(WAGE_FLOOR, b.wage - 2);
+    w.log(`${owner.name} не витягує платню в «${b.name}» і знижує її до ${b.wage} срібла/день.`, "economy");
+    for (const id of paid) {
+      const wa = w.agents.get(id);
+      if (wa) adjustRel(wa, owner.id, { trust: -1 });
+    }
+    return;
+  }
+  if (!longUnpaid && reserves >= cost * 3) return;
+  // Last hired goes first.
+  const worker = w.being(paid[paid.length - 1]);
+  if (worker) leaveJob(w, worker, "fired");
+}
+
 export function onDay(w: World, day: number) {
   // Caravans export goods → money flows into town (keeps prices from collapsing)
   for (const id of ITEM_IDS) {
@@ -413,6 +474,7 @@ export function onDay(w: World, day: number) {
       }
     } else b.vacancyDays = 0;
   }
+  for (const b of w.businesses.values()) manageStaff(w, b);
   // Ambitious NPC owners try to poach workers from competitors (concept §11).
   for (const b of w.businesses.values()) {
     const owner = b.ownerId ? w.agents.get(b.ownerId) : undefined;
@@ -425,6 +487,9 @@ export function onDay(w: World, day: number) {
     const cur = w.businesses.get(target.jobBiz!)!;
     const offer = Math.max(b.wage, cur.wage + 2);
     if (b.treasury + owner.coins < offer * 3) continue;
+    // Don't poach into a payroll the business can't earn back.
+    const paid = b.workers.filter((id) => id !== b.ownerId).length;
+    if (b.income !== undefined && (paid + 1) * offer > b.income * 1.3 + 5) continue;
     b.wage = offer;
     w.log(`${owner.name} переманює ${target.name}: пропонує ${offer} срібла/день у «${b.name}».`, "economy");
     requestJobDecision(w, target, { bizId: b.id, wage: offer, from: owner.id }, (d) => {

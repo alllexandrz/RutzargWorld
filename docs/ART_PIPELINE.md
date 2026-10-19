@@ -20,6 +20,8 @@
 | `rock`, `ore`, `stall`, `table`, `counter`, `bed`, `anvil`, `altar`, `crate`, `barrel`, `well`, `pillar`, `fence`, `lamp`, `herb`, `logs`, `bench`, `forge`, `hearth`, `bars` | 64×N | ~(0.5, 0.8–0.92) | пропси (див. `WorldScene.buildObjects`) |
 | `scaffold` | 64×80 | (0.5, 0.9) | риштовання на ділянці під забудову |
 | `stump`, `sapling` | 64×40, 64×56 | (0.5, 0.8–0.9) | пень після рубки, саджанець |
+| `workbench` | 64×56 | (0.5, 0.82) | верстак (станція ремесла) |
+| `pwall_wood`, `pwall_stone` | куб 64×(32+36) | (0.5, 0) | поставлені гравцем/NPC стіни (генеруються `cubeTex`) |
 | `klumnog`, `shard` | 56×96, 12×24 | центр | Клумног та уламки на орбіті |
 | `lightmask`, `glow`, `shadow`, `ring`, `marker` | — | центр | ефекти |
 
