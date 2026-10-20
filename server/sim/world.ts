@@ -14,6 +14,8 @@ import { tickSocial } from "./social.ts";
 import { onHourFamily, tickFamily } from "./family.ts";
 import { bedsShort, onDayHousing, onHourHousing } from "./construction.ts";
 import { onHourCrafting } from "./crafting.ts";
+import { firstElectionAt, initialPolitics, onDayPolitics, onHourPolitics } from "./politics.ts";
+import type { Politics } from "./types.ts";
 import { initialResources, onHourResources, type ResourceState } from "./resources.ts";
 
 export type WorldListener = {
@@ -37,6 +39,8 @@ export class World {
   projects: ConstructionProject[] = [];
   /** Natural resources, tile changes, deposits. */
   res!: ResourceState;
+  /** Who rules the town and how (politics.ts). */
+  politics: Politics = initialPolitics();
   /** Tile changes not yet sent to clients: [x, y, ground, obj]. */
   pendingTiles: [number, number, number, number][] = [];
   /** Municipal treasury: funds the market (it buys from sellers) and town-owned businesses. */
@@ -65,6 +69,7 @@ export class World {
     }
     for (const id of ITEM_IDS) this.market.stock[id] = Math.round(ITEMS[id].targetStock * 0.8);
     this.market.wholesale = Object.fromEntries(ITEM_IDS.filter((id) => ITEMS[id].dailyExport > 0).map((id) => [id, ITEMS[id].dailyExport * 3]));
+    this.politics.nextElection = firstElectionAt(this.time);
     this.syncClock();
     this.log("Світ Rutzarg прокинувся. Каргат, прикордонне містечко Домініону Варон, зустрічає світанок.", "world");
   }
@@ -155,12 +160,14 @@ export class World {
       onHourCrafting(this, hour % 24, (h) => bedsShort(this, h));
       onHourHousing(this, hour % 24);
       onHourResources(this);
+      onHourPolitics(this, hour % 24);
     }
     const day = Math.floor(this.time / 1440);
     if (day !== this.lastDay) {
       this.lastDay = day;
       onDay(this, day + 1);
       onDayHousing(this);
+      onDayPolitics(this);
     }
   }
 

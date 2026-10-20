@@ -14,6 +14,8 @@ import type { Look } from "../../shared/protocol.ts";
 import type { SkillId } from "../../shared/skills.ts";
 import { trainSkill } from "./skillsys.ts";
 import { dayOf } from "../../shared/time.ts";
+import type { C2S } from "../../shared/protocol.ts";
+import { atResidence, castVote, donate, embezzle, isPrivatisable, pardon, registerCandidate, setTax, signPetition } from "./politics.ts";
 import { harvestTile, plantSapling, remaining } from "./resources.ts";
 import { STATION_NAMES, craftMinutes, missingInputs, nearStation, recipeById } from "../../shared/crafting.ts";
 import { craftOnce, fmtItems, pickupNear, placeItem } from "./crafting.ts";
@@ -282,7 +284,7 @@ export function playerBiz(w: World, p: Player, op: string, bizId?: string, amoun
       if (!areaContains(w.map.areas.residence, p.x, p.y)) return w.toast(p.id, "Купівля справ оформлюється в резиденції старости.", "bad");
       const r = buyBusiness(w, p, b);
       if (!r.ok) return w.toast(p.id, r.reason, "bad");
-      w.say("aldric", `Вітаю, ${p.name}. Тепер «${b.name}» належить тобі. Не забувай платити людям.`);
+      w.say(w.politics.reeve, `Вітаю, ${p.name}. Тепер «${b.name}» належить тобі. Не забувай платити людям.`);
       w.toast(p.id, `Ти власник «${b.name}»! Наймай людей через розмову з ними.`, "good");
       return;
     }
@@ -399,6 +401,44 @@ export function awaySummary(world: World, p: Player): { t: number; text: string;
   p.inbox = [];
   p.offlineSince = undefined;
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Politics (panel G)
+// ---------------------------------------------------------------------------
+
+export function playerPolitics(w: World, p: Player, m: Extract<C2S, { t: "politics" }>): { ok: boolean; reason: string } | null {
+  const P = w.politics;
+  if (m.op === "info") return null;
+  if (w.isJailed(p) && m.op !== "embezzle") return { ok: false, reason: "З в'язниці не до політики." };
+  if (!atResidence(w, p)) return { ok: false, reason: "Це оформлюється в резиденції старости." };
+  const reeve = P.reeve === p.id;
+  switch (m.op) {
+    case "candidate": return registerCandidate(w, p);
+    case "vote": return castVote(w, p, String(m.target ?? ""));
+    case "sign": return signPetition(w, p);
+    case "donate": return donate(w, p, Number(m.amount ?? 0));
+  }
+  if (!reeve) return { ok: false, reason: "Це може лише староста." };
+  switch (m.op) {
+    case "setTax": setTax(w, Number(m.amount ?? 0)); return { ok: true, reason: `Податок: ${Math.round(P.taxRate * 100)}% виручки справ.` };
+    case "setWage": {
+      const b = w.businesses.get(m.bizId ?? "");
+      if (!b || b.ownerId !== "town") return { ok: false, reason: "Це не справа громади." };
+      b.wage = Math.max(1, Math.min(50, Math.floor(Number(m.amount ?? b.wage))));
+      return { ok: true, reason: `«${b.name}»: платня ${b.wage}/день (з міської скарбниці).` };
+    }
+    case "forSale": {
+      const b = w.businesses.get(m.bizId ?? "");
+      if (!b || !isPrivatisable(b)) return { ok: false, reason: "Це майно громади не продається." };
+      const price = Math.floor(Number(m.amount ?? 0));
+      b.forSale = price > 0 ? price : null;
+      return { ok: true, reason: b.forSale ? `«${b.name}» виставлено на продаж за ${b.forSale}. Купити можна тут, у резиденції (гроші — у скарбницю).` : `«${b.name}» знято з продажу.` };
+    }
+    case "pardon": return pardon(w, String(m.target ?? ""));
+    case "embezzle": return embezzle(w, p, Number(m.amount ?? 0));
+  }
+  return null;
 }
 
 export function resetPlayerOnJoin(w: World, p: Player) {

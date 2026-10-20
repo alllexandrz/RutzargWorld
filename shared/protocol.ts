@@ -82,7 +82,7 @@ export interface DialogOption {
   id: string;
   label: string;
   /** Option needs an extra argument (target person, wage...) chosen by the client. */
-  arg?: "person" | "wage" | "text" | "buy";
+  arg?: "person" | "wage" | "text" | "buy" | "amount";
 }
 
 export interface DialogLine { who: string; text: string; id: number; t: number; mine: boolean }
@@ -143,6 +143,28 @@ export interface PlotInfo {
   by: string | null;
 }
 
+export interface PoliticsInfo {
+  reeve: { id: string; name: string };
+  how: "founding" | "elected" | "coup";
+  since: number;
+  legitimacy: number;      // 0..100
+  approval: number;        // -100..100
+  taxRate: number;         // 0..0.3
+  taxSteps: number[];
+  treasury: number;
+  nextElection: number;
+  youAreReeve: boolean;
+  atResidence: boolean;
+  election: { reason: "term" | "recall"; endsAt: number; candidates: { id: string; name: string; votes: number }[]; yourVote: string | null; youRun: boolean } | null;
+  petition: { count: number; needed: number; signed: boolean };
+  /** Guards sworn to you / all guards. */
+  plot: { sworn: number; guards: number };
+  history: { t: number; text: string }[];
+  /** Reeve only. */
+  prisoners?: { id: string; name: string; until: number }[];
+  townBiz?: { id: string; name: string; wage: number; forSale: number | null; workers: number; maxWorkers: number; privatisable: boolean; value: number }[];
+}
+
 export interface ChronicleEntry {
   t: number;
   text: string;
@@ -169,6 +191,8 @@ export type C2S =
   | { t: "place"; item: ItemId; x: number; y: number }
   /** Dismantle the nearest placed thing and take it. */
   | { t: "pickup" }
+  /** Town politics (panel G). Paperwork needs presence at the residence. */
+  | { t: "politics"; op: "info" | "candidate" | "vote" | "sign" | "donate" | "setTax" | "setWage" | "forSale" | "pardon" | "embezzle"; target?: string; amount?: number; bizId?: string }
   | { t: "ping"; ts: number };
 
 // ---- Server -> Client ----
@@ -185,6 +209,7 @@ export type S2C =
   | { t: "inspect"; info: InspectInfo }
   | { t: "chronicle"; entries: ChronicleEntry[] }
   | { t: "toast"; text: string; kind?: "info" | "good" | "bad" }
+  | { t: "politics"; info: PoliticsInfo }
   /** What happened while the player was offline (summary lines first). */
   | { t: "inbox"; items: { t: number; text: string; kind: string }[] }
   | { t: "teleport"; x: number; y: number }

@@ -1,6 +1,6 @@
 // DOM user interface layered over the Phaser canvas.
 
-import type { BusinessInfo, DialogLine, DialogMsg, InspectInfo, MarketInfo, SelfState, ChronicleEntry } from "../../shared/protocol.ts";
+import type { BusinessInfo, DialogLine, DialogMsg, InspectInfo, MarketInfo, SelfState, ChronicleEntry, PoliticsInfo } from "../../shared/protocol.ts";
 import { ITEMS, ITEM_IDS, type ItemId } from "../../shared/items.ts";
 import { RECIPES, STATION_NAMES, craftMinutes, nearStation, type Station } from "../../shared/crafting.ts";
 import { SKILLS, SKILL_IDS, skillRank, type SkillId } from "../../shared/skills.ts";
@@ -26,7 +26,7 @@ let inspectTimer: number | null = null;
 // Panels
 // ---------------------------------------------------------------------------
 
-const PANELS = ["panel-dialog", "panel-market", "panel-biz", "panel-inspect", "panel-chronicle", "panel-help", "panel-talklog", "panel-skills", "panel-craft"];
+const PANELS = ["panel-dialog", "panel-market", "panel-biz", "panel-inspect", "panel-chronicle", "panel-help", "panel-talklog", "panel-skills", "panel-craft", "panel-politics"];
 
 function openPanel(id: string) {
   const el = $(id);
@@ -185,6 +185,75 @@ function renderSkills() {
 }
 
 // ---------------------------------------------------------------------------
+// Town politics (G)
+// ---------------------------------------------------------------------------
+
+let politics: PoliticsInfo | null = null;
+const HOW: Record<PoliticsInfo["how"], string> = { founding: "давній староста", elected: "обраний", coup: "захопив владу силою" };
+
+function meter(v: number, min: number, max: number, cls = "") {
+  return `<span class="minibar ${cls}"><i style="width:${Math.round(((v - min) / (max - min)) * 100)}%"></i></span>`;
+}
+
+function renderPolitics(i: PoliticsInfo) {
+  politics = i;
+  // don't wipe a number the player is typing (the panel refreshes every few seconds)
+  const focused = document.activeElement;
+  if (focused && focused.tagName === "INPUT" && $("politics-body").contains(focused)) return;
+  const here = i.atResidence;
+  const lock = here ? "" : `disabled title="Це оформлюється в резиденції старости"`;
+  const el = i.election;
+  const elHtml = el ? `<h3 class="sect">${el.reason === "recall" ? "Дострокові вибори" : "Вибори старости"} · підрахунок ${fmtDayTime(el.endsAt)}</h3>
+      <p class="muted">Числа — скільки людей зараз за кожного (NPC можуть передумати: агітація, подарунки, чутки).</p>
+      ${el.candidates.map((c) => `<div class="kv"><span>${esc(c.name)}${c.id === i.reeve.id ? " <span class=\"muted\">(чинний)</span>" : ""}</span><span><b>${c.votes}</b></span>
+        <span><button data-vote="${c.id}" ${lock} ${el.yourVote === c.id ? "class=\"sel\"" : ""}>${el.yourVote === c.id ? "Твій голос ✓" : "Голосувати"}</button></span></div>`).join("")}
+      ${el.youRun ? `<p class="good">Ти кандидат. Агітуй: у розмові з людьми — «Голосуй за мене».</p>` : `<button data-pol="candidate" ${lock}>Висунутися кандидатом (25 срібла)</button>`}`
+    : `<p>Наступні вибори: <b>${fmtDayTime(i.nextElection)}</b>.</p>
+       <p>Петиція за відставку: <b>${i.petition.count}/${i.petition.needed}</b> підписів ${i.petition.signed ? "· <span class=\"muted\">твій підпис є</span>" : i.youAreReeve ? "" : `<button data-pol="sign" ${lock}>Підписати</button>`}
+       <span class="muted">— переконуй людей у розмовах («Підпиши петицію…»).</span></p>`;
+  const reeveHtml = i.youAreReeve ? `<h3 class="sect">Ти староста</h3>
+      ${here ? "" : `<p class="muted">Укази підписуються в резиденції.</p>`}
+      <div class="kv"><span>Податок на виручку справ</span><span>${i.taxSteps.map((t) => `<button data-tax="${t}" ${lock} ${Math.abs(t - i.taxRate) < 0.001 ? "class=\"sel\"" : ""}>${Math.round(t * 100)}%</button>`).join(" ")}</span></div>
+      <p class="muted">Податок наповнює скарбницю (будинки, ліхтарі, платня варті), але власники справ тобі цього не пробачають.</p>
+      ${(i.townBiz ?? []).map((b) => `<div class="kv"><span>${esc(b.name)} <span class="muted">${b.workers}/${b.maxWorkers}</span></span>
+        <span><input type="number" min="1" max="50" value="${b.wage}" id="tw-${b.id}"><button data-twage="${b.id}" ${lock}>Платня</button>
+        ${b.privatisable ? `<input type="number" min="0" value="${b.forSale ?? Math.round(b.value * 1.5)}" id="ts-${b.id}"><button data-tsale="${b.id}" ${lock}>${b.forSale ? `Продається за ${b.forSale} · змінити` : "Виставити на продаж"}</button>${b.forSale ? `<button data-tunsale="${b.id}" ${lock}>Зняти</button>` : ""}` : ""}</span></div>`).join("")}
+      ${(i.prisoners ?? []).length ? `<div class="kv"><span>В'язні</span><span>${i.prisoners!.map((x) => `${esc(x.name)} <button data-pardon="${x.id}" ${lock}>Помилувати</button>`).join(" ")}</span></div>` : ""}
+      <div class="kv"><span class="bad">Скарбниця — твоя?</span><span><input type="number" min="1" max="60" value="20" id="emb-amt"><button data-pol="embezzle" class="danger" ${lock}>Взяти собі</button></span></div>
+      <p class="muted">Хто побачить — розкаже. А писар іноді перевіряє книги.</p>` : "";
+  $("politics-body").innerHTML = `
+    <div class="kv"><span>Староста</span><span><b>${esc(i.reeve.name)}</b> <span class="muted">· ${HOW[i.how]}${i.since ? ` · при владі від: ${fmtDayTime(i.since)}` : ""}</span></span></div>
+    <div class="kv"><span>Легітимність</span>${meter(i.legitimacy, 0, 100)}<span class="num">${i.legitimacy}</span></div>
+    <div class="kv"><span>Підтримка городян</span>${meter(i.approval, -100, 100)}<span class="num">${i.approval > 0 ? "+" : ""}${i.approval}</span></div>
+    <div class="kv"><span>Скарбниця</span><span>${i.treasury} срібла · податок ${Math.round(i.taxRate * 100)}%</span></div>
+    ${!i.youAreReeve ? `<div class="kv"><span>Варта на твоєму боці</span><span>${i.plot.sworn} з ${i.plot.guards} ${i.plot.sworn * 2 > i.plot.guards ? "· <b class=\"good\">досить для перевороту</b> (вимагай влади в розмові зі старостою)" : ""}</span></div>` : ""}
+    ${here ? "" : `<p class="muted">Підписи, кандидатуру, голос і пожертви оформлюють у резиденції старости — кнопки оживуть, коли ти будеш там.</p>`}
+    ${elHtml}
+    ${reeveHtml}
+    <div class="kv"><span>Пожертвувати громаді</span><span><input type="number" min="5" value="20" id="don-amt"><button data-pol="donate" ${lock}>Пожертвувати</button></span></div>
+    <h3 class="sect">Політична хроніка</h3>
+    ${i.history.map((h) => `<div class="line"><span class="muted">${fmtDayTime(h.t)}</span> ${esc(h.text)}</div>`).join("") || `<div class="muted">Поки тихо.</div>`}`;
+  const body = $("politics-body");
+  const send = (op: string, extra: Record<string, unknown> = {}) => net.send({ t: "politics", op: op as never, ...extra });
+  body.querySelectorAll<HTMLButtonElement>("[data-vote]").forEach((b) => b.onclick = () => send("vote", { target: b.dataset.vote }));
+  body.querySelectorAll<HTMLButtonElement>("[data-tax]").forEach((b) => b.onclick = () => send("setTax", { amount: Number(b.dataset.tax) }));
+  body.querySelectorAll<HTMLButtonElement>("[data-twage]").forEach((b) => b.onclick = () => send("setWage", { bizId: b.dataset.twage, amount: Number(($(`tw-${b.dataset.twage}`) as HTMLInputElement).value) }));
+  body.querySelectorAll<HTMLButtonElement>("[data-tsale]").forEach((b) => b.onclick = () => send("forSale", { bizId: b.dataset.tsale, amount: Number(($(`ts-${b.dataset.tsale}`) as HTMLInputElement).value) }));
+  body.querySelectorAll<HTMLButtonElement>("[data-tunsale]").forEach((b) => b.onclick = () => send("forSale", { bizId: b.dataset.tunsale, amount: 0 }));
+  body.querySelectorAll<HTMLButtonElement>("[data-pardon]").forEach((b) => b.onclick = () => send("pardon", { target: b.dataset.pardon }));
+  body.querySelectorAll<HTMLButtonElement>("[data-pol]").forEach((b) => b.onclick = () => {
+    const op = b.dataset.pol!;
+    if (op === "donate") send(op, { amount: Number(($("don-amt") as HTMLInputElement).value) });
+    else if (op === "embezzle") send(op, { amount: Number(($("emb-amt") as HTMLInputElement).value) });
+    else send(op);
+  });
+}
+
+function openPolitics() {
+  togglePanel("panel-politics", () => net.send({ t: "politics", op: "info" }));
+}
+
+// ---------------------------------------------------------------------------
 // Crafting (C) & building
 // ---------------------------------------------------------------------------
 
@@ -309,8 +378,14 @@ function renderDialog(d: DialogMsg) {
   }
 }
 
-function renderArg(d: DialogMsg, opt: string, arg: "person" | "wage" | "text" | "buy") {
+function renderArg(d: DialogMsg, opt: string, arg: "person" | "wage" | "text" | "buy" | "amount") {
   const box = $("dlg-arg");
+  if (arg === "amount") {
+    box.innerHTML = `<label>Хабар (можна 0) <input id="arg-amount" type="number" min="0" value="0"></label><button id="arg-go">Сказати</button>
+      <span class="muted">У тебе ${state.self?.coins ?? 0} срібла</span>`;
+    $("arg-go").onclick = () => net.send({ t: "talk", npcId: d.npcId, opt, price: Number(($("arg-amount") as HTMLInputElement).value) });
+    return;
+  }
   if (arg === "buy") {
     const list = d.sellable ?? [];
     box.innerHTML = `<select id="arg-biz">${list.map((b) => `<option value="${b.id}" data-ask="${b.ask ?? ""}">${esc(b.name)}${b.ask ? ` — просить ${b.ask}` : " — не продає"}</option>`).join("")}</select>
@@ -510,6 +585,7 @@ export function initUI() {
       case "biz": renderBiz(m.list); break;
       case "inspect": renderInspect(m.info); break;
       case "chronicle": addChronicle(m.entries); break;
+      case "politics": renderPolitics(m.info); break;
       case "inbox": {
         chatLine(`<b>Поки тебе не було:</b>`, "away");
         for (const it of m.items) chatLine(`<span class="muted">${fmtDayTime(it.t)}</span> <span class="${it.kind === "bad" ? "bad" : it.kind === "good" ? "good" : ""}">${esc(it.text)}</span>`, "away");
@@ -593,6 +669,7 @@ export function initUI() {
       case "j": case "о": togglePanel("panel-talklog", renderTalklog); break;
       case "k": case "л": togglePanel("panel-skills", renderSkills); break;
       case "c": case "с": togglePanel("panel-craft", renderCraft); break;
+      case "g": case "п": openPolitics(); break;
       case "x": case "ч": net.send({ t: "pickup" }); break;
       case "escape": closeAll(); $("ctx").hidden = true; break;
     }
@@ -615,6 +692,9 @@ export function initUI() {
   // keep-alive: while the dialog window is open the NPC keeps waiting for us
   setInterval(() => { if (dialog) net.send({ t: "talk", npcId: dialog.npcId, opt: "keep" }); }, 5000);
   $("btn-craft").onclick = () => togglePanel("panel-craft", renderCraft);
+  $("btn-politics").onclick = openPolitics;
+  // live numbers while the panel is open (votes move, petitions fill up)
+  setInterval(() => { if (!$("panel-politics").hidden) net.send({ t: "politics", op: "info" }); }, 3000);
   $("btn-pickup").onclick = () => net.send({ t: "pickup" });
   $("craft-body").addEventListener("click", (e) => {
     const b = (e.target as HTMLElement).closest("button[data-craft]") as HTMLButtonElement | null;

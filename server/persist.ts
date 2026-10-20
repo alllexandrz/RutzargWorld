@@ -3,8 +3,10 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { firstElectionAt, initialPolitics } from "./sim/politics.ts";
+import { setTownRep } from "./sim/economy.ts";
 import type { World } from "./sim/world.ts";
-import type { Agent, Business, ChronicleRecord, ConstructionProject, MarketState, Player } from "./sim/types.ts";
+import type { Agent, Business, ChronicleRecord, ConstructionProject, MarketState, Player, Politics } from "./sim/types.ts";
 import type { PlotStage } from "../shared/map.ts";
 import { applyPlot } from "../shared/map.ts";
 import { createBusinesses } from "./sim/seed.ts";
@@ -30,6 +32,7 @@ export interface SaveFile {
   res?: ResourceState;
   mapSize?: number;
   plotStage?: Record<string, PlotStage>;
+  politics?: Politics;
 }
 
 /** Serialisable snapshot of the whole world (runtime-only fields stripped). */
@@ -49,6 +52,7 @@ export function snapshot(w: World): SaveFile {
     projects: w.projects,
     plotStage: w.map.plotStage,
     res: w.res,
+    politics: w.politics,
     mapSize: MAP_W,
   };
 }
@@ -109,6 +113,8 @@ export function restore(w: World, data: SaveFile): boolean {
     w.market.wholesale ??= Object.fromEntries(ITEM_IDS.filter((id) => ITEMS[id].dailyExport > 0).map((id) => [id, ITEMS[id].dailyExport * 3]));
     for (const a of w.agents.values()) a.skills ??= {};
     for (const p of w.players.values()) p.skills ??= {};
+    w.politics = data.politics ?? { ...initialPolitics(), nextElection: firstElectionAt(w.time) };
+    setTownRep(w.politics.reeve);
     w.syncClock();
     return true;
   } catch (e) {

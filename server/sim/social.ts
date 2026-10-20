@@ -18,6 +18,8 @@ export const FACT_IMPORTANCE: Record<FactType, number> = {
   job_offer: 0.3, blessing: 0.95, met: 0.1,
   courting: 0.6, engaged: 0.75, rejected: 0.55, married: 0.9, pregnant: 0.7, birth: 0.85, grew_up: 0.5,
   moved: 0.35, house_started: 0.55, house_built: 0.7, arrived: 0.45,
+  election_called: 0.7, candidate: 0.55, elected: 0.95, coup: 1, coup_failed: 0.9, conspiracy: 0.85, embezzle: 0.85,
+  privatized: 0.6, tax_change: 0.6, donation: 0.5, vote_buying: 0.7, pardon: 0.6,
 };
 
 // ---------------------------------------------------------------------------
@@ -119,6 +121,30 @@ export function factText(w: World, f: Fact, viewer?: string): string {
       return `Збудовано новий будинок: ${f.place} ${when}`;
     case "arrived":
       return `До Каргата ${actorV("прибув", "прибула")} ${actorV("переселенець", "переселенка")} ${n(f.actor)}, ${vg(w, f.actor, "шукає", "шукає")} роботу ${when}`;
+    case "election_called":
+      return `${f.place === "recall" ? "Громада зібрала підписи — дострокові вибори старости" : "Настав час виборів старости"}, голосування до ${f.amount !== undefined ? fmtDay(f.amount) : "завтра"} ${when}`;
+    case "candidate":
+      return `${n(f.actor)} ${actorV("висунувся", "висунулася")} на виборах старости ${when}`;
+    case "elected":
+      return `${n(f.actor)} ${actorV("обраний", "обрана")} старостою Каргата (${f.amount ?? "?"}% голосів) ${when}`;
+    case "coup":
+      return `${n(f.actor)} силою ${actorV("захопив", "захопила")} владу! Варта на ${vg(w, f.actor, "його", "її")} боці, ${n(f.target)} більше не староста ${when}`;
+    case "coup_failed":
+      return `${n(f.actor)} ${actorV("намагався", "намагалася")} захопити владу, але варта не підтримала ${when}`;
+    case "conspiracy":
+      return `${n(f.actor)} ${actorV("підбивав", "підбивала")} варту на змову проти старости ${when}`;
+    case "embezzle":
+      return `Староста ${n(f.actor)} ${actorV("взяв", "взяла")} з міської скарбниці ${f.amount} срібла собі ${when}`;
+    case "privatized":
+      return `${n(f.actor)} ${actorV("викупив", "викупила")} у громади «${biz}» за ${f.amount} срібла ${when}`;
+    case "tax_change":
+      return `Староста встановив податок для справ: ${f.amount}% від виручки ${when}`;
+    case "donation":
+      return `${n(f.actor)} ${actorV("пожертвував", "пожертвувала")} громаді ${f.amount} срібла ${when}`;
+    case "vote_buying":
+      return `${n(f.actor)} ${actorV("купував", "купувала")} голоси перед виборами — ${actorV("дав", "дала")} гроші ${dat(f.target)} ${when}`;
+    case "pardon":
+      return `Староста ${n(f.actor)} ${actorV("помилував", "помилувала")} ${acc(f.target)} ${when}`;
   }
 }
 
@@ -234,7 +260,7 @@ function reactToFact(w: World, a: Agent, f: Fact, c: number, witnessed: boolean)
       break;
     case "unpaid": {
       const b = f.biz ? w.businesses.get(f.biz) : undefined;
-      const owner = b?.ownerId === "town" ? "aldric" : b?.ownerId;
+      const owner = b?.ownerId === "town" ? w.politics.reeve : b?.ownerId;
       if (owner && target === a.id) adjustRel(a, owner, { trust: -15 });
       else if (owner) adjustRel(a, owner, { respect: -4 * c });
       break;
@@ -264,6 +290,33 @@ function reactToFact(w: World, a: Agent, f: Fact, c: number, witnessed: boolean)
     }
     case "blessing":
       if (target) adjustRel(a, target, { respect: 30 * c, trust: 10 * c });
+      break;
+    // ---- politics: how ordinary people feel about it ----
+    case "elected":
+      if (actor) adjustRel(a, actor, { respect: 12 * c });
+      break;
+    case "coup":
+      if (!actor) break;
+      adjustRel(a, actor, { fear: 25 * c, trust: -(10 + a.personality.lawfulness * 30) * c, respect: (a.personality.lawfulness < 0.4 ? 5 : -10) * c });
+      if (target === a.id) { adjustRel(a, actor, { trust: -60, affection: -40 }); addGoal(a, "regain_power", "Повернути владу в Каргаті", 0.85); }
+      break;
+    case "coup_failed":
+    case "conspiracy":
+      if (actor && actor !== a.id) adjustRel(a, actor, { trust: -15 * c * (0.5 + a.personality.lawfulness) });
+      if (f.type === "conspiracy" && actor && a.jobBiz === "guard" && actor !== a.id && c >= 0.5 && !w.isJailed(w.being(actor) ?? a))
+        addGoal(a, `arrest:${actor}:${f.key}`, `Заарештувати ${w.nameOf(actor)} (змова)`, 0.9);
+      break;
+    case "embezzle":
+      if (actor && actor !== a.id) adjustRel(a, actor, { trust: -30 * c, respect: -20 * c });
+      break;
+    case "donation":
+      if (actor && actor !== a.id) adjustRel(a, actor, { respect: Math.min(20, (f.amount ?? 0) / 5) * c, trust: 4 * c });
+      break;
+    case "vote_buying":
+      if (actor && actor !== a.id && target !== a.id) adjustRel(a, actor, { trust: -12 * c * a.personality.lawfulness * 2 });
+      break;
+    case "privatized":
+      if (actor && actor !== a.id) adjustRel(a, actor, { respect: 6 * c });
       break;
     default:
       break;

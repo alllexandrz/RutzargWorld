@@ -105,9 +105,13 @@ export function ownerName(w: World, b: Business): string {
   return b.ownerId ? w.nameOf(b.ownerId) : "—";
 }
 
+/** Who speaks for the town (the current reeve) — set by politics.ts. */
+let townRep = "aldric";
+export function setTownRep(id: string) { townRep = id; }
+
 /** The person who represents the business in social terms. */
 export function ownerPerson(b: Business): string | null {
-  return b.ownerId === "town" ? "aldric" : b.ownerId;
+  return b.ownerId === "town" ? townRep : b.ownerId;
 }
 
 export { bizBuy };
@@ -172,16 +176,17 @@ export function buyBusiness(w: World, buyer: Being, b: Business): TxResult {
   const price = b.forSale;
   buyer.coins -= price;
   w.townTreasury += price;
+  if (b.ownerId === "town") w.townTreasury += b.treasury; // town property: its till stays with the town
   b.ownerId = buyer.id;
   b.forSale = null;
   b.treasury = 0;
   b.vacancyDays = 0;
   const f = newFact(w, "bought_business", { actor: buyer.id, biz: b.id, amount: price, place: "Резиденція старости" });
-  const ald = w.agents.get("aldric");
+  const ald = w.agents.get(townRep);
   if (ald) learnFact(w, ald, f, "self", 1);
   const ba = w.agents.get(buyer.id);
   if (ba) learnFact(w, ba, f, "self", 1);
-  witness(w, f, buyer.x, buyer.y, { exclude: [buyer.id, "aldric"] });
+  witness(w, f, buyer.x, buyer.y, { exclude: [buyer.id, townRep] });
   w.log(`${buyer.name} купує «${b.name}» за ${price} срібла!`, "economy");
   const p = w.players.get(buyer.id);
   if (p) { p.ownedBusinesses.push(b.id); w.selfChanged(p.id); }

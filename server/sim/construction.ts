@@ -138,15 +138,15 @@ export function startProject(w: World, plotId: string, by: string) {
   const builders = w.businesses.get("builders");
   if (builders) builders.area = plotId;
   const what = kind === "mine" ? "шахту" : kind === "quarry" ? "кар'єр" : "новий будинок";
-  const f = newFact(w, "house_started", { actor: by === "town" ? "aldric" : by, place: `${what} «${plot.name}»` });
-  const ald = w.agents.get("aldric");
+  const f = newFact(w, "house_started", { actor: by === "town" ? w.politics.reeve : by, place: `${what} «${plot.name}»` });
+  const ald = w.agents.get(w.politics.reeve);
   if (ald) {
     learnFact(w, ald, f, "self", 1);
     if (by === "town") w.say(ald.id, kind === "house" ? "Місту бракує даху над головою. Будуємо новий дім!" : `На поверхні все вибрали — будуємо ${what}!`);
   }
-  for (const id of builders?.workers ?? []) { const b = w.agents.get(id); if (b) learnFact(w, b, f, "aldric", 1); }
+  for (const id of builders?.workers ?? []) { const b = w.agents.get(id); if (b) learnFact(w, b, f, w.politics.reeve, 1); }
   const mats = (Object.entries(MATERIALS[kind]) as [ItemId, number][]).map(([i, n]) => `${ITEMS[i].name.toLowerCase()} ${n}`).join(", ");
-  w.log(`${by === "town" ? "Староста Альдрик" : w.nameOf(by)} замовляє ${what} (${plot.name}). Потрібно: ${mats}.`, "housing");
+  w.log(`${by === "town" ? w.nameOf(w.politics.reeve) : w.nameOf(by)} замовляє ${what} (${plot.name}). Потрібно: ${mats}.`, "housing");
 }
 
 /** A player pays the builders' guild to build a mine/quarry on a deposit; the result will be theirs. */
@@ -198,7 +198,7 @@ function openExtraction(w: World, p: ConstructionProject, plotId: string) {
   });
   const pl = w.players.get(owner);
   if (pl) { pl.ownedBusinesses.push(id); w.toast(pl.id, `${mine ? "Шахта" : "Кар'єр"} «${plot.name}» збудовано — тепер це твоя справа! Найми людей і поклади гроші в касу.`, "good"); w.selfChanged(pl.id); }
-  const f = newFact(w, "house_built", { place: `${mine ? "шахта" : "кар'єр"} «${plot.name}»`, actor: owner === "town" ? "aldric" : owner });
+  const f = newFact(w, "house_built", { place: `${mine ? "шахта" : "кар'єр"} «${plot.name}»`, actor: owner === "town" ? w.politics.reeve : owner });
   witness(w, f, plot.x + 2.5, plot.y + 2.5);
   w.log(`Відкрито ${mine ? "шахту" : "кар'єр"} «${plot.name}» (власник: ${w.nameOf(owner)}). Запас: ${w.res.deposits[plotId] ?? 0}.`, "housing");
 }

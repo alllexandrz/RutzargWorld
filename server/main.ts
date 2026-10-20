@@ -16,12 +16,13 @@ import { restore, snapshot } from "./persist.ts";
 import { createStorage } from "./storage.ts";
 import { computeStats } from "./stats.ts";
 import { accountFromSession, authConfig, handleAuth } from "./auth.ts";
-import type { C2S, S2C, EntSnap, SelfState, BusinessInfo, InspectInfo, Look } from "../shared/protocol.ts";
+import type { C2S, S2C, EntSnap, SelfState, BusinessInfo, InspectInfo, Look, PoliticsInfo } from "../shared/protocol.ts";
 import { GAME_MINUTES_PER_SECOND, SERVER_TICK_HZ, SNAPSHOT_HZ } from "../shared/constants.ts";
 import { ITEM_IDS, ITEMS, marketBuyPrice, marketPrice, type ItemId } from "../shared/items.ts";
-import { applyInput, awaySummary, createPlayer, playerAct, playerBiz, playerCraft, playerMarket, playerPickpocket, playerPickup, playerPlace, resetConnection, resetPlayerOnJoin } from "./sim/players.ts";
+import { applyInput, awaySummary, createPlayer, playerPolitics, playerAct, playerBiz, playerCraft, playerMarket, playerPickpocket, playerPickup, playerPlace, resetConnection, resetPlayerOnJoin } from "./sim/players.ts";
 import { playerTalk } from "./sim/dialogue.ts";
-import { marketRoom, ownerName, wholesaleLeft, wholesalePrice } from "./sim/economy.ts";
+import { businessValue, marketRoom, ownerName, wholesaleLeft, wholesalePrice } from "./sim/economy.ts";
+import { atResidence, guards, isPrivatisable, petitionNeeded, tally, TAX_STEPS } from "./sim/politics.ts";
 import { CLASS_NAMES, FACTION_NAMES, type Player } from "./sim/types.ts";
 import { llmDescription, llmProbe, llmStatus } from "./ai/llm.ts";
 import { familySummary, isChild } from "./sim/family.ts";
@@ -87,7 +88,7 @@ function entSnaps(): EntSnap[] {
     if (!p.online) continue;
     out.push({
       id: p.id, k: "player", n: p.name, x: round2(p.x), y: round2(p.y), f: p.facing, a: p.anim, l: p.look,
-      s: world.isJailed(p) ? "у в'язниці" : p.blessing ? "✦ благословенний" : p.ownedBusinesses.length ? "власник" : "мандрівник",
+      s: world.isJailed(p) ? "у в'язниці" : world.politics.reeve === p.id ? (p.gender === "f" ? "старостиня" : "староста") : p.blessing ? "✦ благословенний" : p.ownedBusinesses.length ? "власник" : "мандрівник",
     });
   }
   return out;
@@ -134,6 +135,32 @@ function bizList(viewer?: string): BusinessInfo[] {
     treasury: Math.floor(b.treasury), stock: Object.fromEntries(Object.entries(b.stock).map(([k, v]) => [k, Math.floor(v ?? 0)])),
     product: b.product, workHours: b.workHours, areaId: b.area, allowedClasses: b.allowedClasses.map((c) => CLASS_NAMES[c]),
   }));
+}
+
+function politicsInfo(p: Player): PoliticsInfo {
+  const P = world.politics;
+  const mine = P.reeve === p.id;
+  const votes = tally(world);
+  return {
+    reeve: { id: P.reeve, name: world.nameOf(P.reeve) }, how: P.how, since: P.since,
+    legitimacy: Math.round(P.legitimacy), approval: Math.round(P.approval * 100), taxRate: P.taxRate, taxSteps: TAX_STEPS,
+    treasury: Math.round(world.townTreasury), nextElection: P.nextElection, youAreReeve: mine, atResidence: atResidence(world, p),
+    election: P.election ? {
+      reason: P.election.reason, endsAt: P.election.endsAt,
+      candidates: P.election.candidates.map((id) => ({ id, name: world.nameOf(id), votes: votes[id] ?? 0 })),
+      yourVote: P.election.playerVotes[p.id] ?? null, youRun: P.election.candidates.includes(p.id),
+    } : null,
+    petition: { count: P.petition.length, needed: petitionNeeded(world), signed: P.petition.includes(p.id) },
+    plot: { sworn: (P.conspiracy[p.id] ?? []).filter((id) => guards(world).some((g) => g.id === id)).length, guards: guards(world).length },
+    history: P.history.slice(-15).reverse(),
+    ...(mine ? {
+      prisoners: [...world.agents.values(), ...world.players.values()].filter((b) => world.isJailed(b)).map((b) => ({ id: b.id, name: b.name, until: b.jailedUntil ?? 0 })),
+      townBiz: [...world.businesses.values()].filter((b) => b.ownerId === "town").map((b) => ({
+        id: b.id, name: b.name, wage: b.wage, forSale: b.forSale, workers: b.workers.length, maxWorkers: b.maxWorkers,
+        privatisable: isPrivatisable(b), value: businessValue(world, b),
+      })),
+    } : {}),
+  };
 }
 
 function inspect(id: string): InspectInfo | null {
@@ -259,6 +286,13 @@ function handle(s: Session, m: C2S) {
     case "craft": playerCraft(world, p, String(m.recipe), Number(m.n ?? 1)); break;
     case "place": playerPlace(world, p, m.item, Number(m.x), Number(m.y)); break;
     case "pickup": playerPickup(world, p); break;
+    case "politics": {
+      const r = playerPolitics(world, p, m);
+      if (r) send(s, { t: "toast", text: r.reason, kind: r.ok ? "good" : "bad" });
+      send(s, { t: "politics", info: politicsInfo(p) });
+      s.selfDirty = true;
+      break;
+    }
   }
 }
 

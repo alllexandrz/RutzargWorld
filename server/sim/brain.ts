@@ -18,6 +18,7 @@ import { llmEnabled, llmJson } from "../ai/llm.ts";
 import { canWorkAt, SKILL_OF, skillLevel } from "./skillsys.ts";
 import { familySummary, isChild, isInfant, isWeddingHours, tryWedding, weddingReady } from "./family.ts";
 import { doCraft } from "./crafting.ts";
+import { politicsLine } from "./politics.ts";
 
 const JAIL_MINUTES = 6 * 60;
 
@@ -263,7 +264,8 @@ function evaluateOptions(w: World, a: Agent): Option[] {
 function findVacancy(w: World, a: Agent): Business | null {
   let best: Business | null = null, bestScore = -Infinity;
   for (const b of w.businesses.values()) {
-    if (!hasVacancy(b) || !canWorkAt(b, a) || !canAffordHire(w, b)) continue;
+    // the town hall seat is the reeve's — it's won in elections, not applied for
+    if (b.kind === "admin" || !hasVacancy(b) || !canWorkAt(b, a) || !canAffordHire(w, b)) continue;
     const owner = ownerPerson(b);
     const sk = SKILL_OF[b.kind];
     // People prefer work they're good at (their skill makes them more productive and respected).
@@ -566,14 +568,14 @@ function doArrest(w: World, a: Agent) {
   if (!s || w.isJailed(s)) { if (goalId) removeGoal(a, goalId); setActivity(w, a, "idle", "стоїть"); return; }
   const d = Math.hypot(s.x - a.x, s.y - a.y);
   if (d > 1.4) { goTo(w, a, s.x, s.y); return; }
-  jail(w, s, a);
+  jail(w, s, a, goalId?.includes(":conspiracy#") ? "змову проти старости" : "крадіжку");
   if (goalId) removeGoal(a, goalId);
   for (const g of [...a.goals]) if (g.id.startsWith(`arrest:${s.id}:`)) removeGoal(a, g.id);
   setActivity(w, a, "idle", "виконав арешт");
   a.nextThinkAt = w.time + 10;
 }
 
-export function jail(w: World, s: Being, guard: Agent) {
+export function jail(w: World, s: Being, guard: Agent, reason = "крадіжку") {
   s.jailedUntil = w.time + JAIL_MINUTES;
   s.lastJailedAt = w.time;
   // Restitution: the thief's stolen coins go back to known victims
@@ -588,7 +590,7 @@ export function jail(w: World, s: Being, guard: Agent) {
   learnFact(w, guard, f, "self", 1);
   if (thief) learnFact(w, thief, f, "self", 1);
   witness(w, f, s.x, s.y, { exclude: [guard.id, s.id] });
-  w.say(guard.id, `${s.name}, ти заарештований за крадіжку!`);
+  w.say(guard.id, `${s.name}, ти заарештований за ${reason}!`);
   w.log(`${guard.name} заарештовує ${s.name}. ${s.name} проведе в'язниці 6 годин.`, "crime");
   if (thief && thief.jobBiz) leaveJob(w, thief, "jailed");
   const jailArea = w.map.areas.jail;
@@ -600,12 +602,12 @@ export function jail(w: World, s: Being, guard: Agent) {
   if (p) {
     p.busy = null;
     w.listener?.teleport(p.id, s.x, s.y);
-    w.toast(p.id, `${guard.name} заарештував тебе за крадіжку! 6 годин у в'язниці.`, "bad");
+    w.toast(p.id, `${guard.name} заарештував тебе за ${reason}! 6 годин у в'язниці.`, "bad");
     w.selfChanged(p.id);
   }
 }
 
-function release(w: World, a: Being) {
+export function release(w: World, a: Being) {
   a.jailedUntil = null;
   const res = w.map.buildings.find((b) => b.key === "residence")!;
   const out = doorOutside(res);
@@ -787,6 +789,7 @@ export function agentContext(w: World, a: Agent, focusIds: string[] = []): strin
     `PERSONALITY: greed ${p.greed}, loyalty ${p.loyalty}, ambition ${p.ambition}, courage ${p.courage}, lawfulness ${p.lawfulness}, empathy ${p.empathy}`,
     `STATE: гроші ${a.coins}, ситість ${Math.round(a.hunger)}/100, енергія ${Math.round(a.energy)}/100, робота: ${job ? `${job.name} за ${job.wage}/день (неоплачених днів: ${job.unpaidDays[a.id] ?? 0})` : "немає"}`,
     `FAMILY: ${familySummary(w, a).join("; ") || "немає"}`,
+    `TOWN POLITICS: ${politicsLine(w, a)}`,
     `GOALS:\n${a.goals.map((g) => `- ${g.text}`).join("\n") || "- жити далі"}`,
     `RELATIONSHIPS:\n${rels.join("\n") || "-"}`,
     `RELEVANT MEMORIES:\n${mems.join("\n") || "- нічого особливого"}`,

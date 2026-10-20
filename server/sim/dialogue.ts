@@ -13,6 +13,7 @@ import { llmEnabled, llmText } from "../ai/llm.ts";
 import { invAdd, ITEM_IDS, ITEMS, marketPrice } from "../../shared/items.ts";
 import { hourOf } from "../../shared/time.ts";
 import { canRomance, chemistry, decideProposal, engage, familySummary, isChild, reject } from "./family.ts";
+import { approvalOf, attemptCoup, campaign, conspire, guards, isPrivatisable, noteBribe, petitionNeeded, politicsLine, privatePrice, privatise, reeveId, signPetition, voteOf } from "./politics.ts";
 
 type Send = (m: DialogMsg) => void;
 
@@ -58,6 +59,13 @@ function options(w: World, p: Player, a: Agent): DialogOption[] {
   if (offerable(w, p, a).length) o.push({ id: "offer", label: "Запропонувати роботу", arg: "wage" });
   if (sellable(w, p, a).length) o.push({ id: "buybiz", label: "Запропонувати викупити справу", arg: "buy" });
   o.push({ id: "gift", label: "Подарувати 5 срібла" });
+  // Politics
+  const P = w.politics;
+  if (P.election && P.election.candidates.includes(p.id) && (a.flags[`camp_${p.id}`] ?? -1) < P.election.startedAt) o.push({ id: "campaign", label: "Агітувати: «Голосуй за мене»" });
+  if (P.election) o.push({ id: "vote_who", label: "За кого голосуватимеш?" });
+  if (!P.election && p.id !== P.reeve && a.id !== P.reeve && !P.petition.includes(a.id)) o.push({ id: "petition", label: "Підпиши петицію за відставку старости" });
+  if (a.jobBiz === "guard" && p.id !== P.reeve && !(P.conspiracy[p.id] ?? []).includes(a.id)) o.push({ id: "conspire", label: "Змова: стань на мій бік", arg: "amount" });
+  if (a.id === P.reeve && (P.conspiracy[p.id] ?? []).length) o.push({ id: "coup", label: "Вимагати влади (варта зі мною)" });
   // Romance (player ↔ NPC only)
   if (a.spouse === p.id) o.push({ id: "hug", label: a.gender === "f" ? "Обійняти дружину" : "Обійняти чоловіка" });
   else if (a.partner === p.id && a.partnerStage === "engaged") o.push({ id: "wedding", label: "Ходімо до храму — час весілля" });
@@ -79,9 +87,14 @@ function effectiveAsk(w: World, a: Agent, p: Player, bizId: string): number | nu
 }
 
 function sellable(w: World, p: Player, a: Agent) {
-  return [...w.businesses.values()]
+  const own = [...w.businesses.values()]
     .filter((b) => b.ownerId === a.id)
     .map((b) => ({ id: b.id, name: b.name, ask: effectiveAsk(w, a, p, b.id) }));
+  // The reeve also speaks for town property that may be privatised.
+  const town = a.id === reeveId(w)
+    ? [...w.businesses.values()].filter(isPrivatisable).map((b) => ({ id: b.id, name: `${b.name} (майно громади)`, ask: privatePrice(w, b, p.id).price }))
+    : [];
+  return [...own, ...town];
 }
 
 function offerable(w: World, p: Player, a: Agent) {
@@ -245,7 +258,7 @@ function opinionOfPlayer(w: World, a: Agent, p: Player): string {
 
 function dealTalk(w: World, p: Player, a: Agent): string {
   const own = sellable(w, p, a);
-  if (!own.length) return a.id === "aldric" ? "Майно громади не продається. А вільні справи оформлюються тут, у резиденції." : "Я нічим таким не володію.";
+  if (!own.length) return "Я нічим таким не володію.";
   const s0 = own[0];
   if (s0.ask === null) return askPrice(w, w.businesses.get(s0.id)!, p.id).reason;
   a.flags[`ask_${p.id}_${s0.id}`] = s0.ask;
@@ -439,8 +452,18 @@ export function playerTalk(w: World, p: Player, npcId: string, opt: string, extr
     }
     case "buybiz": {
       const b = w.businesses.get(extra.bizId ?? "");
-      if (!b || b.ownerId !== a.id) break;
       const offer = Math.max(0, Math.floor(extra.price ?? 0));
+      if (b && isPrivatisable(b) && a.id === reeveId(w)) {
+        push(p, a, p.name, `Пропоную громаді ${offer} срібла за «${b.name}».`);
+        const pr = privatePrice(w, b, p.id);
+        if (pr.price === null) { push(p, a, a.name, pr.reason); break; }
+        if (offer < pr.price) { push(p, a, a.name, `Громада віддасть «${b.name}» не менше ніж за ${pr.price} срібла. Гроші підуть у скарбницю, люди лишаться на роботі.`); break; }
+        const r = privatise(w, b, p, offer);
+        push(p, a, a.name, r.ok ? `Домовились. «${b.name}» — твоя. Скарбниця дякує, а люди дивитимуться, як ти з ними поводишся.` : r.reason);
+        if (r.ok) w.toast(p.id, `Ти викупив «${b.name}» у громади за ${offer} срібла!`, "good");
+        break;
+      }
+      if (!b || b.ownerId !== a.id) break;
       push(p, a, p.name, `Пропоную ${offer} срібла за «${b.name}».`);
       const r = askPrice(w, b, p.id);
       const ask = effectiveAsk(w, a, p, b.id);
@@ -468,6 +491,45 @@ export function playerTalk(w: World, p: Player, npcId: string, opt: string, extr
         a.flags[`askAt_${p.id}_${b.id}`] = w.time;
         push(p, a, a.name, offer < ask * 0.5 ? `Смієшся? «${b.name}» коштує щонайменше ${ask} срібла.` : `Ні. Моя ціна — ${ask} срібла.`);
       }
+      break;
+    }
+    case "campaign": {
+      push(p, a, p.name, "Голосуй за мене на виборах старости!");
+      push(p, a, a.name, hostile ? "За злодія? Ніколи." : campaign(w, p, a));
+      break;
+    }
+    case "vote_who": {
+      push(p, a, p.name, "За кого голосуватимеш?");
+      const v = voteOf(w, a);
+      push(p, a, a.name, rel(a, p.id).trust < 5 && v !== p.id ? "Це моя справа." : v === p.id ? "За тебе, звісно." : v ? `За ${w.nameOf(v)}. ${v === reeveId(w) ? "Від добра добра не шукають." : "Пора щось міняти."}` : "Мабуть, ні за кого. Усі вони однакові.");
+      break;
+    }
+    case "petition": {
+      push(p, a, p.name, "Підпиши петицію за відставку старости.");
+      const ap = approvalOf(w, a);
+      const att = attitude(a, p.id);
+      if (hostile) { push(p, a, a.name, "Від тебе я нічого не підписую."); break; }
+      if ((ap < 0.1 && att > -10) || att > 40) {
+        const r = signPetition(w, a);
+        push(p, a, a.name, r.ok ? `Давай перо. ${ap < 0 ? `Досить терпіти ${w.nameOf(reeveId(w))}.` : "Роблю це заради тебе."} (${w.politics.petition.length}/${petitionNeeded(w)})` : r.reason);
+      } else push(p, a, a.name, ap > 0.3 ? `Відставку? ${w.nameOf(reeveId(w))} — добрий староста. Ні.` : "Не хочу в це встрявати.");
+      break;
+    }
+    case "conspire": {
+      const bribe = Math.max(0, Math.min(p.coins, Math.floor(extra.price ?? 0)));
+      push(p, a, p.name, bribe ? `(тихо) Стань на мій бік проти старости. Ось ${bribe} срібла.` : "(тихо) Стань на мій бік проти старости.");
+      const r = conspire(w, p, a, bribe);
+      push(p, a, a.name, r.reply);
+      w.selfChanged(p.id);
+      break;
+    }
+    case "coup": {
+      push(p, a, p.name, `${a.name}, твій час минув. Варта зі мною — віддай владу.`);
+      const r = attemptCoup(w, p);
+      push(p, a, a.name, r.ok ? "...Будь ти проклятий. Каргат цього не забуде." : "Варто! Взяти змовника!");
+      w.toast(p.id, r.reason, r.ok ? "good" : "bad");
+      w.selfChanged(p.id);
+      void guards;
       break;
     }
     case "flirt": {
@@ -525,6 +587,7 @@ export function playerTalk(w: World, p: Player, npcId: string, opt: string, extr
       p.coins -= 5; a.coins += 5;
       const f = newFact(w, "gift", { actor: p.id, target: a.id, amount: 5 });
       learnFact(w, a, f, "self", 1);
+      noteBribe(w, p, a, 5);
       push(p, a, p.name, "Ось, візьми 5 срібла.");
       push(p, a, a.name, a.coins < 15 ? "Дякую! Ти навіть не уявляєш, як це вчасно." : "О, дякую. Не забуду.");
       w.selfChanged(p.id);
@@ -585,7 +648,7 @@ function dealContext(w: World, p: Player, a: Agent): string {
   const lines = own.map((s0) => s0.ask === null
     ? `- «${s0.name}»: не продаєш цьому співрозмовнику (${askPrice(w, w.businesses.get(s0.id)!, p.id).reason})`
     : `- «${s0.name}»: ти ПОГОДИШСЯ продати її ${p.name}, якщо він офіційно запропонує ${s0.ask} срібла або більше. Менше ${s0.ask} — відмовляєш.`);
-  if (a.id === "aldric") lines.push("- Майно громади (шахта, варта, лісопилка громади) не продається.");
+  if (a.id === reeveId(w)) lines.push("- Варта, храм, управа й будівельна артіль — не продаються. Лісопилки, шахти, кар'єри громади продаються лише за названу ціну, гроші йдуть у міську скарбницю.");
   const mine = [...w.businesses.values()].filter((b) => b.ownerId === p.id).map((b) => b.name);
   return `ТВОЄ МАЙНО ТА УГОДИ:\n${lines.join("\n") || "- ти не володієш підприємствами"}\n` +
     `ГРОШІ СПІВРОЗМОВНИКА (ти бачиш приблизно): ${p.coins > 200 ? "багатий" : p.coins > 60 ? "заможний" : "небагатий"}${mine.length ? `; володіє: ${mine.join(", ")}` : ""}`;

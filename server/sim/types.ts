@@ -47,7 +47,10 @@ export type FactType =
   | "theft" | "jailed" | "released" | "hired" | "quit" | "fired" | "unpaid" | "bought_business"
   | "debt_threat" | "debt_paid" | "gift" | "wage_raise" | "job_offer" | "blessing" | "met"
   | "courting" | "engaged" | "rejected" | "married" | "pregnant" | "birth" | "grew_up"
-  | "moved" | "house_started" | "house_built" | "arrived";
+  | "moved" | "house_started" | "house_built" | "arrived"
+  // politics
+  | "election_called" | "candidate" | "elected" | "coup" | "coup_failed" | "conspiracy" | "embezzle"
+  | "privatized" | "tax_change" | "donation" | "vote_buying" | "pardon";
 
 /** Something that (supposedly) happened in the world. May be false in a character's head. */
 export interface Fact {
@@ -246,7 +249,32 @@ export interface Business {
   process?: "plank";
 }
 
-export interface LedgerDay { day: number; made: number; sold: number; revenue: number; wages: number; unpaid: number }
+export interface LedgerDay { day: number; made: number; sold: number; revenue: number; wages: number; unpaid: number; tax?: number }
+
+/** Who rules Kargat and how firmly (a small-scale prototype of faction politics, concept §3.5–3.6). */
+export interface Politics {
+  /** The reeve (староста): an NPC or a player. */
+  reeve: string;
+  since: number;
+  /** How the current reeve got the office. */
+  how: "founding" | "elected" | "coup";
+  /** 0..100 — how lawful the people consider this rule. Elections give a lot, a coup very little. */
+  legitimacy: number;
+  /** Share of a private business's daily revenue paid to the town (0..0.3). */
+  taxRate: number;
+  /** Game minute of the next regular election. */
+  nextElection: number;
+  election: { reason: "term" | "recall"; startedAt: number; endsAt: number; candidates: string[]; playerVotes: Record<string, string> } | null;
+  /** Who signed the recall petition against the current reeve. */
+  petition: string[];
+  /** Plotter id → guards sworn to them. */
+  conspiracy: Record<string, string[]>;
+  /** Cached average approval of the reeve among adults (-1..1), refreshed hourly. */
+  approval: number;
+  history: { t: number; text: string }[];
+  /** Thefts from the treasury not yet discovered (the books will tell, sooner or later). */
+  hidden?: { t: number; amount: number; actor: string }[];
+}
 
 /** A house under construction (world state; the map is updated via shared applyPlot). */
 export interface ConstructionProject {

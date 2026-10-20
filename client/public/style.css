@@ -211,3 +211,10 @@ table.ledger th:first-child, table.ledger td:first-child { text-align: left; }
 .stock-row { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 4px 0; border-bottom: 1px dashed var(--border); }
 .stock-row .btns { display: flex; gap: 4px; align-items: center; }
 .stock-row input { width: 64px; }
+
+/* ---- Politics ---- */
+#politics-body .kv { gap: 8px; flex-wrap: wrap; }
+#politics-body input[type=number] { width: 64px; }
+#politics-body button.sel { border-color: var(--gold); color: var(--gold); }
+#politics-body .line { font-size: 12px; padding: 2px 0; }
+button.danger { border-color: #8a3a2a; color: #e07a6a; }

@@ -17,6 +17,7 @@ import { marketBuy, marketSell } from "./economy.ts";
 import { newFact, witness } from "./social.ts";
 import { goTo, goToArea } from "./brain.ts";
 import { isChild } from "./family.ts";
+import { reeveId } from "./politics.ts";
 import { hourOf, dayOf } from "../../shared/time.ts";
 
 const PLACE_RANGE = 2.6;
@@ -101,7 +102,7 @@ export function pickupNear(w: World, b: Being): { ok: boolean; reason?: string; 
   invAdd(b.inv, best.item, 1);
   const mine = owner === b.id || (b.spouse && owner === b.spouse) || (area && mayUseBuilding(w, b, area));
   if (mine) return { ok: true, item: best.item };
-  const victim = owner === "town" ? "aldric" : owner;
+  const victim = owner === "town" ? reeveId(w) : owner;
   const f = newFact(w, "theft", { actor: b.id, target: victim, amount: ITEMS[best.item].basePrice, place: w.areaName(b.x, b.y) });
   w.log(`${b.name} розбирає й забирає чуже: ${ITEMS[best.item].name.toLowerCase()} (${w.areaName(b.x, b.y)}).`, "crime");
   witness(w, f, b.x, b.y, { exclude: [b.id] });
@@ -405,7 +406,7 @@ function townLamps(w: World) {
   const who = (guild?.workers ?? []).map((id) => w.agents.get(id)).find((a): a is Agent => !!a && canTakePlan(w, a));
   if (!who) return;
   assignPlan(w, who, { item: "lamp", qty: 1, use: { kind: "place", x: best.x, y: best.y }, payer: "guild", label: "робить вуличний ліхтар для міста", priority: 0.85 },
-    `Староста Альдрик доручає ${who.name} поставити новий ліхтар: вулиця тоне в темряві (${w.areaName(best.x, best.y)}).`);
+    `${w.nameOf(reeveId(w))} доручає ${who.name} поставити новий ліхтар: вулиця тоне в темряві (${w.areaName(best.x, best.y)}).`);
 }
 
 /** People without work make things the market lacks, if it pays. */
