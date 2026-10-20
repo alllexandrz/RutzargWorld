@@ -1,7 +1,8 @@
 // Network protocol between the Phaser client and the authoritative server.
 // JSON over WebSocket. Keep messages small and explicit.
 
-import type { Inventory, ItemId } from "./items.ts";
+import type { Inventory, ItemId, Slot } from "./items.ts";
+import type { Equipment } from "./gear.ts";
 
 export type EntityKind = "player" | "npc" | "klumnog";
 
@@ -27,6 +28,8 @@ export interface EntSnap {
   s?: string;
   /** Child (rendered smaller). */
   c?: 1;
+  /** Visible gear: head, body, weapon, offhand item ids. */
+  g?: { h?: ItemId; b?: ItemId; w?: ItemId; o?: ItemId };
 }
 
 export interface SelfState {
@@ -47,6 +50,31 @@ export interface SelfState {
   family: string[];
   /** Skill levels 0..100. */
   skills: Partial<Record<string, number>>;
+  /** Worn clothes, weapon/tool and their condition. */
+  equip: Equipment;
+  stats: { attack: number; armor: number; presence: number; power: number };
+}
+
+/** Character sheet (panel I) — the heavier part, sent on request. */
+export interface CharInfo {
+  name: string;
+  gender: "m" | "f";
+  socialClass: string;
+  faction: string;
+  job: string | null;
+  businesses: string[];
+  roles: string[];
+  daysInWorld: number | null;
+  location: string;
+  /** Speed bonuses from the tool in hand, e.g. { "Деревина": 60 } (%). */
+  gather: Record<string, number>;
+  reputation: { known: number; friends: number; foes: number; trust: number; respect: number; fear: number; adults: number };
+  /** People who think best / worst of you. */
+  friends: { name: string; v: number }[];
+  foes: { name: string; v: number }[];
+  /** What people tell about you: event text + how many believe it. */
+  rumors: { text: string; n: number }[];
+  lastJailed: number | null;
 }
 
 export interface MarketInfo {
@@ -106,6 +134,7 @@ export interface DialogMsg {
 
 export interface InspectInfo {
   id: string;
+  gear?: string[];
   name: string;
   kind: EntityKind;
   faction: string;
@@ -191,6 +220,11 @@ export type C2S =
   | { t: "place"; item: ItemId; x: number; y: number }
   /** Dismantle the nearest placed thing and take it. */
   | { t: "pickup" }
+  /** Put on / take off clothes, weapons, tools. */
+  | { t: "equip"; item: ItemId }
+  | { t: "unequip"; slot: Slot }
+  /** Request the character sheet (S2C "char"). */
+  | { t: "charinfo" }
   /** Town politics (panel G). Paperwork needs presence at the residence. */
   | { t: "politics"; op: "info" | "candidate" | "vote" | "sign" | "donate" | "setTax" | "setWage" | "forSale" | "pardon" | "embezzle"; target?: string; amount?: number; bizId?: string }
   | { t: "ping"; ts: number };
@@ -210,6 +244,7 @@ export type S2C =
   | { t: "chronicle"; entries: ChronicleEntry[] }
   | { t: "toast"; text: string; kind?: "info" | "good" | "bad" }
   | { t: "politics"; info: PoliticsInfo }
+  | { t: "char"; info: CharInfo }
   /** What happened while the player was offline (summary lines first). */
   | { t: "inbox"; items: { t: number; text: string; kind: string }[] }
   | { t: "teleport"; x: number; y: number }

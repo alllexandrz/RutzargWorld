@@ -11,6 +11,8 @@ import { requestJobDecision } from "./brain.ts";
 import { isOwnerWorker } from "./seed.ts";
 import { canWorkAt, SKILL_OF, skillLevel, trainSkill } from "./skillsys.ts";
 import { skillMult } from "../../shared/skills.ts";
+import { toolBonus, useTool } from "./gear.ts";
+import { WEAR } from "../../shared/gear.ts";
 import { buildHour } from "./construction.ts";
 import { digDeposit, fellTrees } from "./resources.ts";
 
@@ -297,6 +299,8 @@ export function onHour(w: World, hour: number) {
   }
 }
 
+const WORK_RESOURCE: Partial<Record<string, ItemId>> = { lumber: "wood", mine: "ore", quarry: "stone", farm: "grain" };
+
 function produce(w: World, b: Business, workerId: string) {
   const worker = w.being(workerId);
   const skill = SKILL_OF[b.kind];
@@ -310,9 +314,13 @@ function produce(w: World, b: Business, workerId: string) {
     return;
   }
   if (!b.product) return;
-  const toolBonus = worker && (worker.inv.tools ?? 0) > 0 ? 1.3 : 1;
+  // the right tool in hand (axe, pickaxe, sickle) beats a generic tool kit in the bag
+  const res = WORK_RESOURCE[b.kind] ?? b.product;
+  const heldBonus = worker ? 1 + toolBonus(worker, res) : 1;
+  if (worker && heldBonus > 1) useTool(w, worker, res, WEAR.workHour);
+  const toolBonus_ = Math.max(heldBonus, worker && (worker.inv.tools ?? 0) > 0 ? 1.3 : 1);
   const tiredPenalty = worker && worker.energy < 15 ? 0.5 : 1;
-  const amount = b.rate * toolBonus * tiredPenalty * (worker && skill ? skillMult(skillLevel(worker, skill)) : 1);
+  const amount = b.rate * toolBonus_ * tiredPenalty * (worker && skill ? skillMult(skillLevel(worker, skill)) : 1);
   for (const [item, per] of Object.entries(b.inputs) as [ItemId, number][]) {
     const need = per * amount;
     if ((b.stock[item] ?? 0) < need) {

@@ -28,6 +28,10 @@ import { llmDescription, llmProbe, llmStatus } from "./ai/llm.ts";
 import { familySummary, isChild } from "./sim/family.ts";
 import { commissionPlot, plotStates } from "./sim/construction.ts";
 import { MAP_W, areaContains } from "../shared/map.ts";
+import { equipItem, statsOf, unequip } from "./sim/gear.ts";
+import { charInfo } from "./sim/charsheet.ts";
+import { SLOTS, SLOT_NAMES, condLabel } from "../shared/gear.ts";
+import type { Being } from "./sim/types.ts";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const ROOT = resolve(import.meta.dirname, "..");
@@ -82,6 +86,7 @@ function entSnaps(): EntSnap[] {
       id: a.id, k: a.kind, n: a.name, x: round2(a.x), y: round2(a.y), f: a.facing, a: a.anim, l: a.look,
       s: world.isJailed(a) ? "у в'язниці" : a.pregnancy ? `${a.title} · вагітна` : a.title,
       ...(isChild(world, a) ? { c: 1 as const } : {}),
+      g: visibleGear(a),
     });
   }
   for (const p of world.players.values()) {
@@ -89,12 +94,25 @@ function entSnaps(): EntSnap[] {
     out.push({
       id: p.id, k: "player", n: p.name, x: round2(p.x), y: round2(p.y), f: p.facing, a: p.anim, l: p.look,
       s: world.isJailed(p) ? "у в'язниці" : world.politics.reeve === p.id ? (p.gender === "f" ? "старостиня" : "староста") : p.blessing ? "✦ благословенний" : p.ownedBusinesses.length ? "власник" : "мандрівник",
+      g: visibleGear(p),
     });
   }
   return out;
 }
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
+
+/** Gear others can see on the sprite. */
+function visibleGear(b: Being): EntSnap["g"] {
+  const e = b.equip;
+  if (!e) return undefined;
+  const g: NonNullable<EntSnap["g"]> = {};
+  if (e.head) g.h = e.head.item;
+  if (e.body) g.b = e.body.item;
+  if (e.weapon) g.w = e.weapon.item;
+  if (e.offhand) g.o = e.offhand.item;
+  return Object.keys(g).length ? g : undefined;
+}
 const roundSkills = (sk: Record<string, number | undefined> | undefined) =>
   Object.fromEntries(Object.entries(sk ?? {}).map(([k, v]) => [k, Math.floor(v ?? 0)]));
 
@@ -107,7 +125,16 @@ function selfState(p: Player): SelfState {
     blessing: p.blessing,
     family: familySummary(world, p),
     skills: roundSkills(p.skills),
+    equip: Object.fromEntries(Object.entries(p.equip ?? {}).map(([k, v]) => [k, { item: v.item, dur: Math.round(v.dur) }])),
+    stats: (({ attack, armor, presence, power }) => ({ attack, armor, presence, power }))(statsOf(p)),
   };
+}
+
+function gearLines(b: Being): string[] {
+  return SLOTS.filter((s) => b.equip?.[s]).map((s) => {
+    const w = b.equip![s]!;
+    return `${SLOT_NAMES[s]}: ${ITEMS[w.item].name} (${condLabel(w.dur)}, ${Math.round(w.dur)}%)`;
+  });
 }
 
 function marketInfo() {
@@ -181,6 +208,7 @@ function inspect(id: string): InspectInfo | null {
       family: familySummary(world, a),
       skills: roundSkills(a.skills),
       home: world.map.areas[a.home]?.name ?? a.home,
+      gear: gearLines(a),
     };
   }
   const p = world.players.get(id);
@@ -190,6 +218,7 @@ function inspect(id: string): InspectInfo | null {
       profession: "Гравець", job: p.ownedBusinesses.map((b) => world.businesses.get(b)?.name).join(", ") || "—", coins: p.coins,
       needs: { "Ситість": Math.round(p.hunger), "Енергія": Math.round(p.energy) }, personality: {}, activity: p.busy?.label ?? "—",
       goals: [], memories: [], relations: [], location: world.areaName(p.x, p.y), family: familySummary(world, p), skills: roundSkills(p.skills), home: "—",
+      gear: gearLines(p),
     };
   }
   return null;
@@ -286,6 +315,15 @@ function handle(s: Session, m: C2S) {
     case "craft": playerCraft(world, p, String(m.recipe), Number(m.n ?? 1)); break;
     case "place": playerPlace(world, p, m.item, Number(m.x), Number(m.y)); break;
     case "pickup": playerPickup(world, p); break;
+    case "equip":
+    case "unequip": {
+      if (world.isJailed(p)) { send(s, { t: "toast", text: "У в'язниці не до перевдягань.", kind: "bad" }); break; }
+      const r = m.t === "equip" ? equipItem(world, p, m.item) : SLOTS.includes(m.slot) ? unequip(world, p, m.slot) : { ok: false, reason: "Немає такого місця" };
+      if (!r.ok) send(s, { t: "toast", text: r.reason ?? "Не вийшло", kind: "bad" });
+      s.selfDirty = true;
+      break;
+    }
+    case "charinfo": send(s, { t: "char", info: charInfo(world, p) }); break;
     case "politics": {
       const r = playerPolitics(world, p, m);
       if (r) send(s, { t: "toast", text: r.reason, kind: r.ok ? "good" : "bad" });

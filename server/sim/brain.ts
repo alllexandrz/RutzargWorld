@@ -16,6 +16,7 @@ import { addGoal, adjustRel, attitude, canSee, learnFact, newFact, rel, removeGo
 import { buyBusiness, buyMeal, canAffordHire, hasVacancy, hire, leaveJob, marketBuy, mealPrice, ownerPerson } from "./economy.ts";
 import { llmEnabled, llmJson } from "../ai/llm.ts";
 import { canWorkAt, SKILL_OF, skillLevel } from "./skillsys.ts";
+import { resistArrest } from "./gear.ts";
 import { familySummary, isChild, isInfant, isWeddingHours, tryWedding, weddingReady } from "./family.ts";
 import { doCraft } from "./crafting.ts";
 import { politicsLine } from "./politics.ts";
@@ -568,6 +569,12 @@ function doArrest(w: World, a: Agent) {
   if (!s || w.isJailed(s)) { if (goalId) removeGoal(a, goalId); setActivity(w, a, "idle", "стоїть"); return; }
   const d = Math.hypot(s.x - a.x, s.y - a.y);
   if (d > 1.4) { goTo(w, a, s.x, s.y); return; }
+  if (resistArrest(w, s, a)) {
+    // beaten off: the goal stays, the guard regroups and tries again later
+    setActivity(w, a, "idle", "оговтується після бійки");
+    a.nextThinkAt = w.time + 45;
+    return;
+  }
   jail(w, s, a, goalId?.includes(":conspiracy#") ? "змову проти старости" : "крадіжку");
   if (goalId) removeGoal(a, goalId);
   for (const g of [...a.goals]) if (g.id.startsWith(`arrest:${s.id}:`)) removeGoal(a, g.id);

@@ -4,12 +4,27 @@ export type ItemId =
   // raw resources & food
   | "wood" | "ore" | "stone" | "grain" | "herbs" | "meal" | "sapling"
   // processed materials
-  | "plank" | "iron" | "tools"
+  | "plank" | "iron" | "tools" | "cloth"
   // placeable things (furniture, buildings parts, stations)
   | "bed" | "table" | "bench" | "crate" | "barrel" | "fence" | "wall_wood" | "wall_stone"
-  | "lamp" | "workbench" | "forge" | "anvil" | "hearth" | "well";
+  | "lamp" | "workbench" | "forge" | "anvil" | "hearth" | "well"
+  // things worn or held (shared/gear.ts)
+  | "cap" | "helmet" | "shirt" | "svyta" | "chainmail" | "trousers" | "lychaky" | "boots"
+  | "club" | "knife" | "axe" | "pickaxe" | "sickle" | "spear" | "sword" | "shield";
 
-export type ItemGroup = "raw" | "material" | "placeable";
+export type ItemGroup = "raw" | "material" | "placeable" | "wear";
+
+/** Where a worn / held item goes. */
+export type Slot = "head" | "body" | "legs" | "feet" | "weapon" | "offhand";
+
+export interface GearStats {
+  attack?: number;
+  armor?: number;
+  /** How well-dressed / imposing — people judge by looks. */
+  presence?: number;
+  /** Gathering / work speed bonus per resource (0.5 = +50%). */
+  gather?: Partial<Record<ItemId, number>>;
+}
 
 export interface ItemDef {
   id: ItemId;
@@ -23,6 +38,9 @@ export interface ItemDef {
   group: ItemGroup;
   /** Placeable items: the map object (shared/map.ts `O`) it becomes when put down. */
   obj?: number;
+  /** Wearable items: the slot and what it gives. */
+  slot?: Slot;
+  stats?: GearStats;
 }
 
 // Object ids mirror shared/map.ts `O` (kept as literals: map.ts must not depend on items.ts and vice versa).
@@ -35,6 +53,9 @@ const mat = (id: ItemId, name: string, basePrice: number, targetStock: number, d
 const put = (id: ItemId, name: string, basePrice: number, obj: number, color: string, targetStock = 4): ItemDef =>
   ({ id, name, basePrice, targetStock, dailyExport: 1, color, group: "placeable", obj });
 
+const wear = (id: ItemId, name: string, basePrice: number, slot: Slot, stats: GearStats, color: string): ItemDef =>
+  ({ id, name, basePrice, targetStock: 4, dailyExport: 1, color, group: "wear", slot, stats });
+
 export const ITEMS: Record<ItemId, ItemDef> = {
   wood: raw("wood", "Деревина", 3, 40, 18, "#9a6b3f"),
   ore: raw("ore", "Руда", 4, 30, 14, "#7d8796"),
@@ -46,6 +67,7 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   plank: mat("plank", "Дошки", 2, 30, 3, "#c89a62"),
   iron: mat("iron", "Залізо", 14, 10, 3, "#8e9aa6"),
   tools: mat("tools", "Інструменти", 18, 8, 3, "#b7c0c8"),
+  cloth: mat("cloth", "Полотно", 5, 20, 4, "#d9cfb4"),
   bed: put("bed", "Ліжко", 22, OBJ.BED, "#8a7a6a"),
   table: put("table", "Стіл", 12, OBJ.TABLE, "#7a5230"),
   bench: put("bench", "Лава", 9, OBJ.BENCH, "#8a6a3a"),
@@ -60,6 +82,22 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   anvil: put("anvil", "Ковадло", 70, OBJ.ANVIL, "#5a5a64", 2),
   hearth: put("hearth", "Вогнище", 30, OBJ.HEARTH, "#d0703a", 2),
   well: put("well", "Колодязь", 55, OBJ.WELL, "#7a8a9a", 1),
+  cap: wear("cap", "Шапка", 6, "head", { presence: 1 }, "#7a5a3a"),
+  helmet: wear("helmet", "Шолом", 34, "head", { armor: 3, presence: 1 }, "#9aa4ae"),
+  shirt: wear("shirt", "Сорочка", 11, "body", { presence: 2 }, "#e8e0cc"),
+  svyta: wear("svyta", "Свита", 24, "body", { armor: 1, presence: 4 }, "#8a6a4a"),
+  chainmail: wear("chainmail", "Кольчуга", 80, "body", { armor: 6, presence: 2 }, "#8e98a2"),
+  trousers: wear("trousers", "Штани", 10, "legs", { presence: 1 }, "#6a5a48"),
+  lychaky: wear("lychaky", "Личаки", 3, "feet", { armor: 0.5 }, "#b49a6a"),
+  boots: wear("boots", "Чоботи", 16, "feet", { armor: 1, presence: 2 }, "#4a3a2a"),
+  club: wear("club", "Кийок", 4, "weapon", { attack: 3 }, "#7a5a32"),
+  knife: wear("knife", "Ніж", 16, "weapon", { attack: 4, gather: { herbs: 0.3 } }, "#b8c0c8"),
+  axe: wear("axe", "Сокира", 22, "weapon", { attack: 5, gather: { wood: 0.6 } }, "#a8b0b8"),
+  pickaxe: wear("pickaxe", "Кайло", 34, "weapon", { attack: 4, gather: { ore: 0.6, stone: 0.6 } }, "#98a0a8"),
+  sickle: wear("sickle", "Серп", 16, "weapon", { attack: 2, gather: { grain: 0.6, herbs: 0.4 } }, "#c0c8d0"),
+  spear: wear("spear", "Спис", 22, "weapon", { attack: 7 }, "#a08a5a"),
+  sword: wear("sword", "Меч", 48, "weapon", { attack: 10, presence: 2 }, "#d0d8e0"),
+  shield: wear("shield", "Щит", 26, "offhand", { armor: 4 }, "#8a5a32"),
 };
 
 /** The placeable item that a map object comes from (for dismantling). */

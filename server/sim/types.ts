@@ -4,6 +4,7 @@
 import type { Anim, EntityKind, Look } from "../../shared/protocol.ts";
 import type { Inventory, ItemId } from "../../shared/items.ts";
 import type { Skills } from "../../shared/skills.ts";
+import type { Equipment } from "../../shared/gear.ts";
 
 export type SocialClass =
   | "LABOR" | "CRAFT" | "SCHOLAR" | "MILITARY" | "MERCHANT" | "ADMINISTRATIVE" | "ARCANE" | "UNBOUND" | "KLUMNOGI";
@@ -50,7 +51,8 @@ export type FactType =
   | "moved" | "house_started" | "house_built" | "arrived"
   // politics
   | "election_called" | "candidate" | "elected" | "coup" | "coup_failed" | "conspiracy" | "embezzle"
-  | "privatized" | "tax_change" | "donation" | "vote_buying" | "pardon";
+  | "privatized" | "tax_change" | "donation" | "vote_buying" | "pardon"
+  | "resisted";
 
 /** Something that (supposedly) happened in the world. May be false in a character's head. */
 export interface Fact {
@@ -115,6 +117,10 @@ export interface Being {
   /** Game minute of the last arrest — the guards' jail register (no double punishment). */
   lastJailedAt?: number;
   jobBiz: string | null;
+  /** Worn clothes and held weapon/tool (shared/gear.ts). */
+  equip?: Equipment;
+  /** Condition of used copies in the bag (taken off), so a worn thing doesn't come back new. Never longer than the bag count. */
+  worn?: Partial<Record<ItemId, number[]>>;
 
   // ---- Family (concept §21) ----
   /** Romantic partner before the wedding. */
@@ -167,7 +173,8 @@ export type CraftUse =
   | { kind: "place"; x: number; y: number; area?: string }
   | { kind: "deliver"; project: string }
   | { kind: "sell" }
-  | { kind: "keep" };
+  | { kind: "keep" }
+  | { kind: "equip" };
 
 export interface CraftPlan {
   item: ItemId;
@@ -203,6 +210,8 @@ export interface Player extends Being {
   inbox?: { t: number; text: string; kind: string }[];
   /** Game minute the player went offline. */
   offlineSince?: number;
+  /** Game minute the character first came to Karhat. */
+  joinedAt?: number;
 }
 
 export type BusinessKind = "lumber" | "mine" | "quarry" | "farm" | "smithy" | "tavern" | "guard" | "temple" | "admin" | "trade" | "construction";

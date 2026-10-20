@@ -499,7 +499,44 @@ function makeFx(scene: Phaser.Scene) {
   canvasTex(scene, "rain", 2, 12, (c) => { c.fillStyle = "rgba(180,200,230,0.5)"; c.fillRect(0, 0, 1, 12); });
 }
 
+// ---------------------------------------------------------------------------
+// Gear drawn over characters: `gear_<item>`. Held items are drawn upright, grip near the bottom
+// (origin 0.5, GEAR_GRIP); hats sit on the head.
+// ---------------------------------------------------------------------------
+
+export const GEAR_GRIP = 0.82;
+const WOOD = "#7a5530", STEEL = "#c8d0d8", STEEL_D = "#8a949e";
+
+function makeGear(scene: Phaser.Scene) {
+  const held = (key: string, h: number, draw: (c: Ctx, h: number) => void) => canvasTex(scene, `gear_${key}`, 14, h, (c) => draw(c, h));
+  const shaft = (c: Ctx, y0: number, y1: number, col = WOOD, w = 2) => { c.fillStyle = col; c.fillRect(7 - w / 2, y0, w, y1 - y0); };
+  held("club", 24, (c, h) => { shaft(c, 6, h, WOOD, 2); c.fillStyle = "#6a4626"; c.beginPath(); c.ellipse(7, 7, 3.5, 6, 0, 0, Math.PI * 2); c.fill(); });
+  held("knife", 18, (c, h) => { shaft(c, 11, h, "#4a3420", 2); c.fillStyle = STEEL; c.beginPath(); c.moveTo(6, 11); c.lineTo(8.5, 11); c.lineTo(7.5, 2); c.closePath(); c.fill(); });
+  held("axe", 28, (c, h) => { shaft(c, 2, h); c.fillStyle = STEEL; c.beginPath(); c.moveTo(8, 3); c.lineTo(13, 1); c.lineTo(13, 11); c.lineTo(8, 8); c.closePath(); c.fill(); c.fillStyle = STEEL_D; c.fillRect(12, 1, 1, 10); });
+  held("pickaxe", 28, (c, h) => { shaft(c, 3, h); c.strokeStyle = STEEL_D; c.lineWidth = 2.5; c.beginPath(); c.moveTo(1, 7); c.quadraticCurveTo(7, 0, 13, 7); c.stroke(); });
+  held("sickle", 22, (c, h) => { shaft(c, 12, h, WOOD, 2); c.strokeStyle = STEEL; c.lineWidth = 2; c.beginPath(); c.arc(9, 8, 5, Math.PI * 0.6, Math.PI * 2.1); c.stroke(); });
+  held("spear", 40, (c, h) => { shaft(c, 6, h, "#8a6a3a", 2); c.fillStyle = STEEL; c.beginPath(); c.moveTo(7, 0); c.lineTo(9.5, 7); c.lineTo(4.5, 7); c.closePath(); c.fill(); });
+  held("sword", 30, (c, h) => {
+    c.fillStyle = STEEL; c.fillRect(6, 1, 3, h - 9); c.fillStyle = "#e8eef4"; c.fillRect(6, 1, 1, h - 9);
+    c.fillStyle = "#a08040"; c.fillRect(2, h - 9, 11, 2); c.fillStyle = "#4a3420"; c.fillRect(6, h - 7, 3, 6); c.fillStyle = "#c0a050"; c.fillRect(6, h - 2, 3, 2);
+  });
+  canvasTex(scene, "gear_shield", 14, 16, (c) => {
+    c.fillStyle = "#6a4426"; c.beginPath(); c.moveTo(1, 1); c.lineTo(13, 1); c.lineTo(13, 8); c.quadraticCurveTo(7, 16, 1, 8); c.closePath(); c.fill();
+    c.strokeStyle = STEEL_D; c.lineWidth = 1.5; c.stroke(); c.fillStyle = STEEL; c.beginPath(); c.arc(7, 6, 2, 0, Math.PI * 2); c.fill();
+  });
+  canvasTex(scene, "gear_cap", 18, 9, (c) => {
+    c.fillStyle = "#6a4a2e"; c.beginPath(); c.ellipse(9, 7, 8.5, 3, 0, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.arc(9, 6, 6.5, Math.PI, Math.PI * 2); c.fill(); c.fillStyle = "#8a6a44"; c.fillRect(3, 5, 12, 1.5);
+  });
+  canvasTex(scene, "gear_helmet", 18, 12, (c) => {
+    c.fillStyle = STEEL_D; c.beginPath(); c.arc(9, 9, 8, Math.PI, Math.PI * 2); c.fill();
+    c.fillStyle = STEEL; c.beginPath(); c.arc(8, 8, 5, Math.PI * 1.1, Math.PI * 1.6); c.lineTo(8, 8); c.fill();
+    c.fillStyle = "#6a747e"; c.fillRect(1, 8, 16, 2.5); c.fillRect(8, 9, 2, 3);
+  });
+}
+
 export function generateTextures(scene: Phaser.Scene) {
+  makeGear(scene);
   makeGround(scene);
   makeTrees(scene);
   makeProps(scene);

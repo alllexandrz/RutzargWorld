@@ -20,6 +20,7 @@ export const FACT_IMPORTANCE: Record<FactType, number> = {
   moved: 0.35, house_started: 0.55, house_built: 0.7, arrived: 0.45,
   election_called: 0.7, candidate: 0.55, elected: 0.95, coup: 1, coup_failed: 0.9, conspiracy: 0.85, embezzle: 0.85,
   privatized: 0.6, tax_change: 0.6, donation: 0.5, vote_buying: 0.7, pardon: 0.6,
+  resisted: 0.75,
 };
 
 // ---------------------------------------------------------------------------
@@ -143,6 +144,8 @@ export function factText(w: World, f: Fact, viewer?: string): string {
       return `${n(f.actor)} ${actorV("пожертвував", "пожертвувала")} громаді ${f.amount} срібла ${when}`;
     case "vote_buying":
       return `${n(f.actor)} ${actorV("купував", "купувала")} голоси перед виборами — ${actorV("дав", "дала")} гроші ${dat(f.target)} ${when}`;
+    case "resisted":
+      return `${n(f.actor)} ${actorV("відбився", "відбилася")} від вартового ${w.nameOf(f.target)} і не ${actorV("дався", "далася")} заарештувати ${when}`;
     case "pardon":
       return `Староста ${n(f.actor)} ${actorV("помилував", "помилувала")} ${acc(f.target)} ${when}`;
   }
@@ -317,6 +320,9 @@ function reactToFact(w: World, a: Agent, f: Fact, c: number, witnessed: boolean)
       break;
     case "privatized":
       if (actor && actor !== a.id) adjustRel(a, actor, { respect: 6 * c });
+      break;
+    case "resisted":
+      if (actor && actor !== a.id) adjustRel(a, actor, { fear: 8 * c, trust: -8 * c * (0.5 + a.personality.lawfulness) });
       break;
     default:
       break;

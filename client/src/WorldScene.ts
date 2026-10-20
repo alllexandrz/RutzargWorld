@@ -9,7 +9,7 @@ import { findPath } from "../../shared/path.ts";
 import { INPUT_DT, PLAYER_SPEED, INTERACT_RANGE } from "../../shared/constants.ts";
 import type { EntSnap, Anim, PlotInfo } from "../../shared/protocol.ts";
 import { TW, TH, toScreen, toWorld, depthOf } from "./iso.ts";
-import { generateTextures, groundKey, GROUND_VARIANTS, cubeTex, shade, CHAR_H } from "./textures.ts";
+import { generateTextures, groundKey, GROUND_VARIANTS, cubeTex, shade, CHAR_H, GEAR_GRIP } from "./textures.ts";
 import { net } from "./net.ts";
 import { state, pushSnap } from "./state.ts";
 import { bus } from "./bus.ts";
@@ -28,6 +28,11 @@ interface BuildingGfx {
 class EntityView {
   container: Phaser.GameObjects.Container;
   layers: Phaser.GameObjects.Sprite[] = [];
+  /** Hat / helmet, weapon in the right hand, shield in the left. */
+  hat: Phaser.GameObjects.Image | null = null;
+  held: Phaser.GameObjects.Image | null = null;
+  shield: Phaser.GameObjects.Image | null = null;
+  gearSig = "";
   orb: Phaser.GameObjects.Image | null = null;
   ring: Phaser.GameObjects.Image;
   anim = "";
@@ -60,6 +65,10 @@ class EntityView {
         this.layers.push(sp);
         children.push(sp);
       }
+      this.hat = scene.add.image(0, -44, "gear_cap").setVisible(false);
+      this.held = scene.add.image(9, -12, "gear_axe").setOrigin(0.5, GEAR_GRIP).setVisible(false);
+      this.shield = scene.add.image(-10, -20, "gear_shield").setVisible(false);
+      children.push(this.shield, this.hat, this.held);
     }
     this.container = scene.add.container(0, 0, children);
     this.container.setSize(32, 52);
@@ -84,6 +93,28 @@ class EntityView {
       this.layers.forEach((sp, i) => sp.play(`${layerNames[i]}_${row}_${anim}`, true));
     }
     for (const sp of this.layers) sp.setFlipX(flip);
+    this.applyGear(e, row, flip);
+  }
+
+  /** Clothes and weapons over the character sprite (hidden while lying down). */
+  applyGear(e: EntSnap, row: number, flip: boolean) {
+    if (!this.hat || !this.held || !this.shield) return;
+    const g = e.g ?? {};
+    const lying = e.a === "sleep";
+    const sig = `${g.h}|${g.b}|${g.w}|${g.o}`;
+    if (sig !== this.gearSig) {
+      this.gearSig = sig;
+      if (g.h) this.hat.setTexture(`gear_${g.h}`);
+      if (g.w) this.held.setTexture(`gear_${g.w}`);
+      // mail shows as a steel-grey tunic
+      this.layers[0]?.setTint(Phaser.Display.Color.HexStringToColor(g.b === "chainmail" ? "#8e98a2" : e.l.body).color);
+    }
+    const side = flip ? -1 : 1;
+    this.hat.setVisible(!!g.h && !lying).setFlipX(flip);
+    this.held.setVisible(!!g.w && !lying).setPosition(9 * side, -12).setFlipX(flip);
+    this.shield.setVisible(!!g.o && !lying).setPosition(-10 * side, -20).setFlipX(flip);
+    // walking away from the camera: the shield is on the back, the weapon in front of it
+    this.shield.setAlpha(row === 1 ? 0.85 : 1);
   }
 
   place(x: number, y: number) {

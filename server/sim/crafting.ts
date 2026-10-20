@@ -18,6 +18,7 @@ import { newFact, witness } from "./social.ts";
 import { goTo, goToArea } from "./brain.ts";
 import { isChild } from "./family.ts";
 import { reeveId } from "./politics.ts";
+import { equipItem } from "./gear.ts";
 import { hourOf, dayOf } from "../../shared/time.ts";
 
 const PLACE_RANGE = 2.6;
@@ -246,6 +247,11 @@ function useResult(w: World, a: Agent, pl: CraftPlan) {
       w.log(`${a.name} змайстрував(ла) собі: ${name}.`, "craft");
       a.craftPlan = null;
       return;
+    case "equip":
+      equipItem(w, a, pl.item);
+      w.log(`${a.name} має обнову: ${name}.`, "craft");
+      a.craftPlan = null;
+      return;
     case "sell": {
       if (!areaContains(w.map.areas.market, a.x, a.y)) { a.activity.label = `несе на ринок: ${name}`; if (!goToArea(w, a, "market")) fail(w, a, "не дійти до ринку"); return; }
       const r = marketSell(w, a, pl.item, pl.qty);
@@ -309,7 +315,7 @@ function isHome(w: World, areaId: string): boolean {
     [...w.agents.values()].some((a) => a.home === areaId);
 }
 
-function canTakePlan(w: World, a: Agent): boolean {
+export function canTakePlan(w: World, a: Agent): boolean {
   return a.kind === "npc" && !a.craftPlan && !w.isJailed(a) && !isChild(w, a);
 }
 

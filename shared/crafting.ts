@@ -6,6 +6,7 @@
 //   stone → forge, hearth, stone walls, well (hands)
 //   ore + wood → iron (forge) → anvil (forge) → tools, lamps (anvil)
 //   grain / herbs → meal (hearth)
+//   herbs → cloth (hands) → clothes; iron (anvil) → weapons, axes, pickaxes, armour
 
 import type { ItemId, Inventory } from "./items.ts";
 import type { SkillId } from "./skills.ts";
@@ -55,6 +56,25 @@ export const RECIPES: Recipe[] = [
   r("fence", 2, { plank: 2 }, "workbench", "carpentry", 10),
   r("wall_wood", 1, { plank: 4 }, "workbench", "carpentry", 20),
   r("meal", 1, { grain: 2 }, "hearth", "cooking", 15),
+  // clothes: nettle and flax fibre from herbs are spun and woven by hand
+  r("cloth", 1, { herbs: 2 }, "hand", "tailoring", 20),
+  r("cap", 1, { cloth: 1 }, "hand", "tailoring", 15),
+  r("shirt", 1, { cloth: 2 }, "hand", "tailoring", 25),
+  r("trousers", 1, { cloth: 2 }, "hand", "tailoring", 25),
+  r("svyta", 1, { cloth: 4 }, "workbench", "tailoring", 45),
+  r("lychaky", 1, { wood: 1 }, "hand", "tailoring", 15),
+  r("boots", 1, { cloth: 2, plank: 1 }, "workbench", "tailoring", 35),
+  // weapons, tools and armour
+  r("club", 1, { wood: 2 }, "hand", "carpentry", 10),
+  r("shield", 1, { plank: 3, iron: 1 }, "workbench", "carpentry", 30),
+  r("knife", 1, { iron: 1 }, "anvil", "smithing", 15),
+  r("sickle", 1, { iron: 1 }, "anvil", "smithing", 20),
+  r("axe", 1, { iron: 1, plank: 1 }, "anvil", "smithing", 25),
+  r("pickaxe", 1, { iron: 2, plank: 1 }, "anvil", "smithing", 30),
+  r("spear", 1, { iron: 1, plank: 2 }, "anvil", "smithing", 25),
+  r("sword", 1, { iron: 3 }, "anvil", "smithing", 50),
+  r("helmet", 1, { iron: 2 }, "anvil", "smithing", 35),
+  r("chainmail", 1, { iron: 5 }, "anvil", "smithing", 80),
 ];
 
 export const RECIPE_BY_OUT: Partial<Record<ItemId, Recipe>> = Object.fromEntries(RECIPES.map((x) => [x.out, x]));

@@ -1,6 +1,6 @@
 // Skills: any character can learn any skill; a skill grows by using it (concept §6, §21A).
 
-export type SkillId = "woodcutting" | "mining" | "farming" | "herbalism" | "smithing" | "carpentry" | "cooking" | "building" | "trading" | "combat";
+export type SkillId = "woodcutting" | "mining" | "farming" | "herbalism" | "smithing" | "carpentry" | "cooking" | "tailoring" | "building" | "trading" | "combat";
 
 export const SKILLS: Record<SkillId, { name: string; verb: string }> = {
   woodcutting: { name: "Лісорубство", verb: "рубає ліс" },
@@ -10,6 +10,7 @@ export const SKILLS: Record<SkillId, { name: string; verb: string }> = {
   smithing: { name: "Ковальство", verb: "кує" },
   carpentry: { name: "Теслярство", verb: "майструє з дерева" },
   cooking: { name: "Кулінарія", verb: "куховарить" },
+  tailoring: { name: "Кравецтво", verb: "шиє одяг" },
   building: { name: "Будівництво", verb: "будує" },
   trading: { name: "Торгівля", verb: "торгує" },
   combat: { name: "Бій", verb: "несе варту" },

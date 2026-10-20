@@ -4,6 +4,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { firstElectionAt, initialPolitics } from "./sim/politics.ts";
+import { ensureOutfits } from "./sim/gear.ts";
 import { setTownRep } from "./sim/economy.ts";
 import type { World } from "./sim/world.ts";
 import type { Agent, Business, ChronicleRecord, ConstructionProject, MarketState, Player, Politics } from "./sim/types.ts";
@@ -115,6 +116,7 @@ export function restore(w: World, data: SaveFile): boolean {
     for (const p of w.players.values()) p.skills ??= {};
     w.politics = data.politics ?? { ...initialPolitics(), nextElection: firstElectionAt(w.time) };
     setTownRep(w.politics.reeve);
+    ensureOutfits(w);
     w.syncClock();
     return true;
   } catch (e) {

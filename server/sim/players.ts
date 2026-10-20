@@ -20,6 +20,8 @@ import { harvestTile, plantSapling, remaining } from "./resources.ts";
 import { STATION_NAMES, craftMinutes, missingInputs, nearStation, recipeById } from "../../shared/crafting.ts";
 import { craftOnce, fmtItems, pickupNear, placeItem } from "./crafting.ts";
 import { skillLevel } from "./skillsys.ts";
+import { equipItem, starterOutfit, toolBonus, unequip, useTool } from "./gear.ts";
+import { WEAR } from "../../shared/gear.ts";
 
 const lastMoveAt = new Map<string, number>();
 
@@ -30,7 +32,9 @@ export function createPlayer(w: World, id: string, name: string, token: string, 
     coins: START_COINS, inv: {}, hunger: 80, energy: 90, faction: "varon", socialClass: "UNBOUND",
     jailedUntil: null, jobBiz: null, skills: {}, token, online: true, lastInputSeq: 0, moveDir: { x: 0, y: 0 },
     inputBudget: 0, busy: null, ownedBusinesses: [], blessing: false, lastTalkReward: {},
+    joinedAt: w.time,
   };
+  p.equip = starterOutfit(p);
   w.players.set(id, p);
   w.log(`До Каргата через східну браму приходить ${p.gender === "f" ? "мандрівниця" : "мандрівник"} ${name}.`, "player");
   return p;
@@ -90,6 +94,7 @@ function completeBusy(w: World, p: Player) {
       if (b.tile && !harvestTile(w, b.tile.x, b.tile.y)) { w.toast(p.id, "Тут уже нічого не лишилося.", "bad"); break; }
       invAdd(p.inv, item, 1);
       p.energy = Math.max(0, p.energy - 1.5);
+      useTool(w, p, item, WEAR.gather);
       trainSkill(w, p, GATHER_SKILL[item], 0.35);
       let msg = `+1 ${ITEMS[item].name}`;
       if (item === "wood" && Math.random() < 0.25) { invAdd(p.inv, "sapling", 1); msg += ", +1 Саджанець"; }
@@ -139,7 +144,8 @@ function gatherTime(p: Player, item: ItemId): number {
   const base = (p.inv.tools ?? 0) > 0 ? 1600 : 2400;
   // Novice ~3 s, master ~2 s per item (players shouldn't feel crippled at start).
   const level = p.skills?.[GATHER_SKILL[item]] ?? 0;
-  return Math.round(base / (0.8 + level / 250));
+  // the right tool in hand (axe for trees, pickaxe for rocks, sickle for fields)
+  return Math.round(base / (0.8 + level / 250) / (1 + toolBonus(p, item)));
 }
 
 /** The nearest gatherable resource and its tile (fields are endless; trees/rocks/herbs deplete). */

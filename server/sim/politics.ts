@@ -13,6 +13,7 @@ import { businessValue, hire, leaveJob, ledgerToday, setTownRep } from "./econom
 import { isChild } from "./family.ts";
 import { bedsShort } from "./construction.ts";
 import { jail, release } from "./brain.ts";
+import { statsOf } from "./gear.ts";
 import { areaContains } from "../../shared/map.ts";
 import { dayOf, hourOf } from "../../shared/time.ts";
 
@@ -110,6 +111,7 @@ export function voteScore(w: World, voter: Agent, cand: string): number {
   if (el && (voter.flags[`bribe_${cand}`] ?? -1) >= el.startedAt) s += voter.personality.greed > 0.5 ? 0.4 : -0.3;
   const c = w.being(cand);
   if (c && c.socialClass === voter.socialClass) s += 0.1;
+  if (c) s += statsOf(c).presence * 0.02; // people judge by looks
   if (w.players.get(cand)?.blessing) s += 0.15;
   if (voter.spouse === cand || voter.partner === cand || voter.parents?.includes(cand) || voter.children?.includes(cand)) s += 1;
   const job = voter.jobBiz ? w.businesses.get(voter.jobBiz) : undefined;

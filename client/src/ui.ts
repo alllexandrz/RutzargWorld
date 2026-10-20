@@ -1,7 +1,8 @@
 // DOM user interface layered over the Phaser canvas.
 
-import type { BusinessInfo, DialogLine, DialogMsg, InspectInfo, MarketInfo, SelfState, ChronicleEntry, PoliticsInfo } from "../../shared/protocol.ts";
-import { ITEMS, ITEM_IDS, type ItemId } from "../../shared/items.ts";
+import type { BusinessInfo, CharInfo, DialogLine, DialogMsg, InspectInfo, MarketInfo, SelfState, ChronicleEntry, PoliticsInfo } from "../../shared/protocol.ts";
+import { ITEMS, ITEM_IDS, type ItemGroup, type ItemId, type Slot } from "../../shared/items.ts";
+import { SLOT_NAMES, condLabel } from "../../shared/gear.ts";
 import { RECIPES, STATION_NAMES, craftMinutes, nearStation, type Station } from "../../shared/crafting.ts";
 import { SKILLS, SKILL_IDS, skillRank, type SkillId } from "../../shared/skills.ts";
 import { INTERACT_RANGE } from "../../shared/constants.ts";
@@ -26,16 +27,93 @@ let inspectTimer: number | null = null;
 // Panels
 // ---------------------------------------------------------------------------
 
-const PANELS = ["panel-dialog", "panel-market", "panel-biz", "panel-inspect", "panel-chronicle", "panel-help", "panel-talklog", "panel-skills", "panel-craft", "panel-politics"];
+const PANELS = ["panel-dialog", "panel-market", "panel-biz", "panel-inspect", "panel-chronicle", "panel-help", "panel-talklog", "panel-char", "panel-craft", "panel-politics"];
 
 function openPanel(id: string) {
   const el = $(id);
   el.hidden = false;
+  raisePanel(el);
+  clampPanel(el);
+}
+
+// ---------------------------------------------------------------------------
+// Draggable windows: grab the title bar. The position is remembered per window
+// (per browser); double-click the title bar to put the window back.
+// ---------------------------------------------------------------------------
+
+let topZ = 5;
+function raisePanel(el: HTMLElement) { el.style.zIndex = String(++topZ); }
+
+const POS_KEY = "rutzarg.panelPos";
+function loadPositions(): Record<string, { x: number; y: number }> {
+  try { return JSON.parse(localStorage.getItem(POS_KEY) ?? "{}"); } catch { return {}; }
+}
+function savePosition(id: string, pos: { x: number; y: number } | null) {
+  try {
+    const all = loadPositions();
+    if (pos) all[id] = pos; else delete all[id];
+    localStorage.setItem(POS_KEY, JSON.stringify(all));
+  } catch { /* storage unavailable: positions just aren't remembered */ }
+}
+
+function placePanel(el: HTMLElement, x: number, y: number) {
+  el.style.left = `${x}px`;
+  el.style.top = `${y}px`;
+  el.style.right = "auto";
+  el.style.transform = "none";
+}
+
+/** Keep at least the title bar reachable after a resize or on reopen. */
+function clampPanel(el: HTMLElement) {
+  if (el.style.transform !== "none") return;
+  const r = el.getBoundingClientRect();
+  const x = Math.max(60 - r.width, Math.min(window.innerWidth - 60, r.left));
+  const y = Math.max(0, Math.min(window.innerHeight - 40, r.top));
+  if (x !== r.left || y !== r.top) placePanel(el, x, y);
+}
+
+function makeDraggable(el: HTMLElement) {
+  const bar = el.querySelector(".ph") as HTMLElement | null;
+  if (!bar) return;
+  const saved = loadPositions()[el.id];
+  if (saved) placePanel(el, saved.x, saved.y);
+  el.addEventListener("pointerdown", () => raisePanel(el));
+  bar.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || (e.target as HTMLElement).closest("button, input, select, a")) return;
+    const r = el.getBoundingClientRect();
+    const dx = e.clientX - r.left, dy = e.clientY - r.top;
+    placePanel(el, r.left, r.top);
+    bar.setPointerCapture(e.pointerId);
+    el.classList.add("dragging");
+    const move = (ev: PointerEvent) => {
+      const x = Math.max(60 - r.width, Math.min(window.innerWidth - 60, ev.clientX - dx));
+      const y = Math.max(0, Math.min(window.innerHeight - 40, ev.clientY - dy));
+      placePanel(el, x, y);
+    };
+    const up = () => {
+      bar.removeEventListener("pointermove", move);
+      bar.removeEventListener("pointerup", up);
+      bar.removeEventListener("pointercancel", up);
+      el.classList.remove("dragging");
+      const p = el.getBoundingClientRect();
+      savePosition(el.id, { x: Math.round(p.left), y: Math.round(p.top) });
+    };
+    bar.addEventListener("pointermove", move);
+    bar.addEventListener("pointerup", up);
+    bar.addEventListener("pointercancel", up);
+    e.preventDefault();
+  });
+  bar.addEventListener("dblclick", (e) => {
+    if ((e.target as HTMLElement).closest("button")) return;
+    el.style.left = el.style.top = el.style.right = el.style.transform = "";
+    savePosition(el.id, null);
+  });
 }
 function closePanel(id: string) {
   $(id).hidden = true;
   if (id === "panel-dialog" && dialog) { net.send({ t: "talk", npcId: dialog.npcId, opt: "bye" }); dialog = null; dialogWith = null; }
   if (id === "panel-inspect" && inspectTimer) { clearInterval(inspectTimer); inspectTimer = null; }
+  if (id === "panel-char" && charTimer) { clearInterval(charTimer); charTimer = null; }
 }
 function togglePanel(id: string, onOpen?: () => void) {
   if ($(id).hidden) { openPanel(id); onOpen?.(); } else closePanel(id);
@@ -85,6 +163,8 @@ function renderSelf(s: SelfState) {
   const inv = ITEM_IDS.filter((i) => (s.inv[i] ?? 0) > 0)
     .map((i) => ITEMS[i].obj !== undefined
       ? `<span class="chip placeable" data-place="${i}" style="--c:${ITEMS[i].color}" title="${ITEMS[i].name} — клікни, щоб поставити">${ITEMS[i].name} <b>${s.inv[i]}</b></span>`
+      : ITEMS[i].slot
+      ? `<span class="chip placeable" data-equip="${i}" style="--c:${ITEMS[i].color}" title="${ITEMS[i].name} — клікни, щоб вдягнути">${ITEMS[i].name} <b>${s.inv[i]}</b></span>`
       : `<span class="chip" style="--c:${ITEMS[i].color}" title="${ITEMS[i].name}">${ITEMS[i].name} <b>${s.inv[i]}</b></span>`).join("");
   $("inventory").innerHTML = inv || `<span class="muted">Сумка порожня</span>`;
   const busy = $("busy");
@@ -177,11 +257,150 @@ function skillRows(skills: Partial<Record<string, number>>, all: boolean): strin
   }).join("");
 }
 
-function renderSkills() {
+// ---------------------------------------------------------------------------
+// Character panel (I): gear, bag, stats
+// ---------------------------------------------------------------------------
+
+type CharTab = "gear" | "bag" | "stats";
+let charTab: CharTab = "gear";
+let charInfo: CharInfo | null = null;
+let charTimer: number | null = null;
+
+function openChar(tab?: CharTab) {
+  if (tab) charTab = tab;
+  else if (!$("panel-char").hidden) { closePanel("panel-char"); return; }
+  openPanel("panel-char");
+  net.send({ t: "charinfo" });
+  if (!charTimer) charTimer = window.setInterval(() => { if (charTab === "stats") net.send({ t: "charinfo" }); }, 3000);
+  renderChar();
+}
+
+function statText(id: ItemId): string {
+  const st = ITEMS[id].stats ?? {};
+  const parts: string[] = [];
+  if (st.attack) parts.push(`атака +${st.attack}`);
+  if (st.armor) parts.push(`захист +${st.armor}`);
+  if (st.presence) parts.push(`вигляд +${st.presence}`);
+  for (const [r, v] of Object.entries(st.gather ?? {}) as [ItemId, number][]) parts.push(`${ITEMS[r].name.toLowerCase()} +${Math.round(v * 100)}%`);
+  return parts.join(" · ");
+}
+
+const DOLL: (Slot | null)[] = [null, "head", null, "weapon", "body", "offhand", null, "legs", null, null, "feet", null];
+
+function gearTab(s: SelfState): string {
+  const slots = DOLL.map((slot) => {
+    if (!slot) return `<div class="doll-gap"></div>`;
+    const w = s.equip?.[slot];
+    if (!w) return `<div class="slot empty"><div class="sn">${SLOT_NAMES[slot]}</div><div class="muted">порожньо</div></div>`;
+    const cls = w.dur < 25 ? "bad" : w.dur < 50 ? "warn" : "";
+    return `<div class="slot" style="--c:${ITEMS[w.item].color}">
+      <div class="sn">${SLOT_NAMES[slot]}</div>
+      <div class="it">${ITEMS[w.item].name}</div>
+      <div class="muted st">${statText(w.item)}</div>
+      <div class="dur ${cls}" title="Стан: ${condLabel(w.dur)}"><i style="width:${w.dur}%"></i></div>
+      <button class="mini" data-unequip="${slot}">Зняти</button>
+    </div>`;
+  }).join("");
+  const spare = ITEM_IDS.filter((i) => ITEMS[i].slot && (s.inv[i] ?? 0) > 0);
+  const spareHtml = spare.length
+    ? spare.map((i) => {
+      const cur = s.equip?.[ITEMS[i].slot!];
+      return `<div class="kv"><span><span class="dot" style="--c:${ITEMS[i].color}"></span>${ITEMS[i].name} ×${s.inv[i]} <span class="muted">· ${SLOT_NAMES[ITEMS[i].slot!].toLowerCase()} · ${statText(i)}</span></span>
+        <button class="mini" data-equip="${i}">${cur ? `Замінити ${ITEMS[cur.item].name.toLowerCase()}` : "Вдягнути"}</button></div>`;
+    }).join("")
+    : `<div class="muted">У сумці немає одягу чи зброї. Пошити або викувати — у «Ремеслі» (C), купити — на ринку (M).</div>`;
+  const st = s.stats;
+  return `<div class="char-gear">
+      <div class="doll">${slots}</div>
+      <div class="char-side">
+        <h4>Бойові якості</h4>
+        <div class="kv"><span>Атака</span><b>${st.attack}</b></div>
+        <div class="kv"><span>Захист</span><b>${st.armor}</b></div>
+        <div class="kv"><span>Вигляд</span><b>${st.presence}</b></div>
+        <div class="kv"><span>Сила в бою</span><b>${st.power}</b></div>
+        <p class="muted">Сила = атака + захист + навичка «Бій». Хто помітно сильніший за вартового, може відбитися від арешту. Вигляд — як тебе сприймають люди (вибори).</p>
+        <h4>Можна вдягнути</h4>${spareHtml}
+      </div>
+    </div>
+    <p class="muted">Знаряддя в руці пришвидшує роботу й зношується від неї; одяг зношується щодня. Знята річ пам'ятає свій знос.</p>`;
+}
+
+const GROUPS: { g: ItemGroup | "food"; title: string }[] = [
+  { g: "raw", title: "Ресурси" }, { g: "food", title: "Їжа" }, { g: "material", title: "Матеріали" },
+  { g: "wear", title: "Одяг, зброя, знаряддя" }, { g: "placeable", title: "Речі для дому й будівництва" },
+];
+
+function bagTab(s: SelfState): string {
+  const have = ITEM_IDS.filter((i) => (s.inv[i] ?? 0) > 0);
+  let value = 0;
+  const sections = GROUPS.map(({ g, title }) => {
+    const items = have.filter((i) => (i === "meal" ? "food" : ITEMS[i].group) === g);
+    if (!items.length) return "";
+    const cards = items.map((i) => {
+      const def = ITEMS[i], n = s.inv[i] ?? 0;
+      value += def.basePrice * n;
+      const act = def.slot ? `<button class="mini" data-equip="${i}">Вдягнути</button>`
+        : def.obj !== undefined ? `<button class="mini" data-place="${i}">Поставити</button>`
+        : i === "meal" ? `<button class="mini" data-eat="1">З'їсти</button>` : "";
+      return `<div class="card" style="--c:${def.color}"><div class="cn">${def.name}</div><div class="cq">×${n}</div>
+        <div class="muted cv">≈ ${def.basePrice * n} срібла${def.slot ? ` · ${statText(i)}` : ""}</div>${act}</div>`;
+    }).join("");
+    return `<h4>${title}</h4><div class="cards">${cards}</div>`;
+  }).join("");
+  return `<div class="kv"><span>Гроші</span><b>⛁ ${s.coins} срібла</b></div>
+    <div class="kv"><span>Речей у сумці</span><span>${have.reduce((a, i) => a + (s.inv[i] ?? 0), 0)} · орієнтовна вартість ≈ ${value} срібла</span></div>
+    ${sections || `<p class="muted">Сумка порожня. Збирай ресурси (F), купуй на ринку (M), майструй (C).</p>`}`;
+}
+
+function statsTab(s: SelfState): string {
+  const c = charInfo;
+  const bar = (label: string, v: number) => `<div class="kv"><span>${label}</span><span class="minibar"><i style="width:${v}%"></i></span><span class="num">${v}</span></div>`;
+  const rep = c?.reputation;
+  const people = (l: { name: string; v: number }[]) => l.map((x) => `${esc(x.name)} <span class="muted">(${x.v > 0 ? "+" : ""}${x.v})</span>`).join(", ") || "—";
+  const gather = c ? Object.entries(c.gather).map(([k, v]) => `${k} +${v}%`).join(", ") : "";
+  return `<div class="char-stats">
+    <div>
+      <h4>Хто ти</h4>
+      ${c ? `<div class="kv"><span>Клас</span><span>${esc(c.socialClass)}</span></div>
+      <div class="kv"><span>Фракція</span><span>${esc(c.faction)}</span></div>
+      <div class="kv"><span>Робота</span><span>${esc(c.job ?? "—")}</span></div>
+      <div class="kv"><span>Справи</span><span>${esc(c.businesses.join(", ") || "—")}</span></div>
+      <div class="kv"><span>У Каргаті</span><span>${c.daysInWorld !== null ? `${c.daysInWorld} дн.` : "—"}</span></div>
+      <div class="kv"><span>Зараз</span><span>${esc(c.location)}</span></div>
+      ${c.lastJailed !== null ? `<div class="kv"><span>Востаннє у в'язниці</span><span>${fmtDayTime(c.lastJailed)}</span></div>` : ""}
+      ${c.roles.map((r) => `<div>• ${esc(r)}</div>`).join("")}` : `<div class="muted">Завантаження…</div>`}
+      <h4>Стан</h4>
+      ${bar("Ситість", s.hunger)}${bar("Енергія", s.energy)}
+      ${s.jailedUntil ? `<div class="bad">У в'язниці до ${fmtClock(s.jailedUntil)}</div>` : ""}
+      ${s.blessing ? `<div>✦ Благословення Клумнога</div>` : ""}
+      <h4>Бойові якості</h4>
+      <div class="kv"><span>Атака / Захист</span><span>${s.stats.attack} / ${s.stats.armor}</span></div>
+      <div class="kv"><span>Сила в бою</span><span>${s.stats.power}</span></div>
+      <div class="kv"><span>Вигляд</span><span>${s.stats.presence}</span></div>
+      ${gather ? `<div class="kv"><span>Знаряддя</span><span>${gather}</span></div>` : ""}
+      ${s.family?.length ? `<h4>Сім'я</h4>${s.family.map((f) => `<div>❤ ${esc(f)}</div>`).join("")}` : ""}
+    </div>
+    <div>
+      <h4>Навички</h4>${skillRows(s.skills ?? {}, true)}
+      <h4>Репутація</h4>
+      ${rep ? `<div class="kv"><span>Тебе знають</span><span>${rep.known} з ${rep.adults} дорослих</span></div>
+      <div class="kv"><span>Прихильні / ворожі</span><span><span class="good">${rep.friends}</span> / <span class="bad">${rep.foes}</span></span></div>
+      <div class="kv"><span>Довіра · повага · страх</span><span>${rep.trust} · ${rep.respect} · ${rep.fear}</span></div>
+      <div class="kv"><span>Найкраще думають</span><span>${people(c!.friends)}</span></div>
+      <div class="kv"><span>Найгірше думають</span><span>${people(c!.foes)}</span></div>` : ""}
+      <h4>Що про тебе кажуть</h4>
+      ${c?.rumors.length ? c.rumors.map((r) => `<div class="mem">${esc(r.text)} <span class="conf" title="скільки людей у це вірять">${r.n} ос.</span></div>`).join("") : `<div class="muted">Поки нічого — ти ще ніхто в Каргаті.</div>`}
+    </div>
+  </div>
+  <p class="muted">Навички ростуть, коли ними користуєшся; вища навичка — швидша робота, ≥30 відкриває роботу поза своїм класом. Репутація — це те, що люди пам'ятають і переказують одне одному, а не очки.</p>`;
+}
+
+function renderChar() {
   const s = state.self;
-  $("skills-body").innerHTML = `${skillRows(s?.skills ?? {}, true)}
-    <p class="muted">Будь-яку навичку може опанувати будь-хто: вона росте, коли нею користуєшся (рубаєш дерева — лісорубство, добуваєш руду чи камінь — гірництво...).
-    Вища навичка — швидша робота. Навичка ≥30 відкриває роботу поза своїм соціальним класом.</p>`;
+  if (!s || $("panel-char").hidden) return;
+  $("char-title").textContent = `${s.name}${s.blessing ? " ✦" : ""}`;
+  for (const b of $("panel-char").querySelectorAll<HTMLButtonElement>(".char-tabs button")) b.classList.toggle("sel", b.dataset.tab === charTab);
+  $("char-body").innerHTML = charTab === "gear" ? gearTab(s) : charTab === "bag" ? bagTab(s) : statsTab(s);
 }
 
 // ---------------------------------------------------------------------------
@@ -288,7 +507,7 @@ function renderCraft() {
     return `<div class="craft-group">${STATION_TITLES[st]}${where}</div>${rows}`;
   }).join("");
   $("craft-body").innerHTML = `${html}<p class="muted">Матеріали — збором (F) або на ринку (M). Зроблене з позначкою в сумці можна поставити: клікни на нього. X — розібрати річ поруч.
-    Навичка ремесла (теслярство, ковальство, будівництво, кулінарія) пришвидшує роботу.</p>`;
+    Навичка ремесла (теслярство, ковальство, кравецтво, будівництво, кулінарія) пришвидшує роботу. Одяг і зброю вдягають у вікні «Персонаж» (I).</p>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -534,6 +753,7 @@ function renderInspect(i: InspectInfo) {
     <div class="kv"><span>Зараз</span><span>${esc(i.activity)}</span></div>
     ${needs}
     <div class="kv"><span>Дім</span><span>${esc(i.home ?? "—")}</span></div>
+    ${i.gear?.length ? `<h4>Спорядження</h4>${i.gear.map((g) => `<div>• ${esc(g)}</div>`).join("")}` : ""}
     <h4>Навички</h4>${skillRows(i.skills ?? {}, false)}
     ${i.family?.length ? `<h4>Сім'я</h4>${i.family.map((f) => `<div>• ${esc(f)}</div>`).join("")}` : ""}
     ${i.goals.length ? `<h4>Цілі</h4>${i.goals.map((g) => `<div>• ${esc(g)}</div>`).join("")}` : ""}
@@ -570,7 +790,7 @@ export function initUI() {
 
   net.on((m) => {
     switch (m.t) {
-      case "self": state.self = m.s; renderSelf(m.s); if (!$("panel-skills").hidden) renderSkills(); if (!$("panel-craft").hidden) renderCraft(); if (!$("panel-market").hidden && market) renderMarket(market); break;
+      case "self": state.self = m.s; renderSelf(m.s); renderChar(); if (!$("panel-craft").hidden) renderCraft(); if (!$("panel-market").hidden && market) renderMarket(market); break;
       case "toast": toast(m.text, m.kind); break;
       case "chat": chatLine(`<b class="pl">${esc(m.name)}:</b> ${esc(m.text)}`); break;
       case "say": {
@@ -586,6 +806,7 @@ export function initUI() {
       case "inspect": renderInspect(m.info); break;
       case "chronicle": addChronicle(m.entries); break;
       case "politics": renderPolitics(m.info); break;
+      case "char": charInfo = m.info; renderChar(); break;
       case "inbox": {
         chatLine(`<b>Поки тебе не було:</b>`, "away");
         for (const it of m.items) chatLine(`<span class="muted">${fmtDayTime(it.t)}</span> <span class="${it.kind === "bad" ? "bad" : it.kind === "good" ? "good" : ""}">${esc(it.text)}</span>`, "away");
@@ -623,6 +844,8 @@ export function initUI() {
   $("btn-inspect").onclick = () => ($("panel-inspect").hidden ? openInspect(state.selectedId) : closePanel("panel-inspect"));
   $("btn-help").onclick = () => togglePanel("panel-help");
   for (const id of PANELS) $(id).querySelector(".close")?.addEventListener("click", () => closePanel(id));
+  for (const id of PANELS) makeDraggable($(id));
+  window.addEventListener("resize", () => { for (const id of PANELS) if (!$(id).hidden) clampPanel($(id)); });
 
   // Free text to the NPC in the current dialogue
   const dlgInput = $("dlg-input") as HTMLInputElement;
@@ -664,10 +887,11 @@ export function initUI() {
       case "m": case "ь": if (inMarket()) openMarket(); else toast("Ринок — на центральній площі міста.", "info"); break;
       case "b": case "и": openBiz(); break;
       case "l": case "д": togglePanel("panel-chronicle"); break;
-      case "i": case "ш": $("panel-inspect").hidden ? openInspect(state.selectedId) : closePanel("panel-inspect"); break;
+      case "i": case "ш": openChar(); break;
+      case "o": case "щ": $("panel-inspect").hidden ? openInspect(state.selectedId) : closePanel("panel-inspect"); break;
       case "h": case "р": togglePanel("panel-help"); break;
       case "j": case "о": togglePanel("panel-talklog", renderTalklog); break;
-      case "k": case "л": togglePanel("panel-skills", renderSkills); break;
+      case "k": case "л": if (!$("panel-char").hidden && charTab === "stats") closePanel("panel-char"); else openChar("stats"); break;
       case "c": case "с": togglePanel("panel-craft", renderCraft); break;
       case "g": case "п": openPolitics(); break;
       case "x": case "ч": net.send({ t: "pickup" }); break;
@@ -701,6 +925,8 @@ export function initUI() {
     if (b) net.send({ t: "craft", recipe: b.dataset.craft!, n: Number(b.dataset.n) });
   });
   $("inventory").addEventListener("click", (e) => {
+    const eq = (e.target as HTMLElement).closest("[data-equip]") as HTMLElement | null;
+    if (eq) { net.send({ t: "equip", item: eq.dataset.equip as ItemId }); return; }
     const chip = (e.target as HTMLElement).closest("[data-place]") as HTMLElement | null;
     if (!chip) return;
     closePanel("panel-craft");
@@ -715,7 +941,18 @@ export function initUI() {
     if (sig !== stationSig) { stationSig = sig; renderCraft(); }
   }, 500);
   $("btn-talklog").onclick = () => togglePanel("panel-talklog", renderTalklog);
-  $("btn-skills").onclick = () => togglePanel("panel-skills", renderSkills);
+  $("btn-char").onclick = () => openChar();
+  for (const b of $("panel-char").querySelectorAll<HTMLButtonElement>(".char-tabs button")) b.onclick = () => openChar(b.dataset.tab as CharTab);
+  $("char-body").addEventListener("click", (e) => {
+    const t = e.target as HTMLElement;
+    const eq = t.closest("[data-equip]") as HTMLElement | null;
+    if (eq) return net.send({ t: "equip", item: eq.dataset.equip as ItemId });
+    const un = t.closest("[data-unequip]") as HTMLElement | null;
+    if (un) return net.send({ t: "unequip", slot: un.dataset.unequip as Slot });
+    const pl = t.closest("[data-place]") as HTMLElement | null;
+    if (pl) { closePanel("panel-char"); bus.emit("build", pl.dataset.place as ItemId); return; }
+    if (t.closest("[data-eat]")) net.send({ t: "act", a: "eat" });
+  });
 
   chatLine(`<span class="muted">Ласкаво просимо до Каргата. Натисни <b>H</b> — довідка. <b>Enter</b> — чат з іншими гравцями.</span>`);
 }
