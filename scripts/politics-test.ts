@@ -99,7 +99,8 @@ const look = { body: "#000", hair: "#000", skin: "#000" };
   const al = w.agents.get("aldric")!;
   al.personality.greed = 0.9; al.personality.lawfulness = 0.1;
   w.townTreasury = 1000;
-  run(w, 4 * 1440);
+  // chance-driven (theft 50%/day, audits by chance): give it up to 12 days
+  run(w, 12 * 1440, () => w.chronicle.some((e) => e.text.includes("бере зі скарбниці")) && adults(w).some((a) => a.memories.some((m) => m.fact?.type === "embezzle")));
   const taxed = [...w.businesses.values()].reduce((n, b) => n + (b.ledger ?? []).reduce((m, d) => m + (d.tax ?? 0), 0), 0);
   check("податок збирається", taxed > 0, `зібрано ${taxed}, ставка ${Math.round(w.politics.taxRate * 100)}%`);
   const stole = w.chronicle.some((e) => e.text.includes("бере зі скарбниці"));

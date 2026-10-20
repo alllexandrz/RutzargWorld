@@ -1,8 +1,8 @@
 // DOM user interface layered over the Phaser canvas.
 
-import type { BusinessInfo, CharInfo, DialogLine, DialogMsg, InspectInfo, MarketInfo, SelfState, ChronicleEntry, PoliticsInfo } from "../../shared/protocol.ts";
+import type { BusinessInfo, CharInfo, LodgingInfo, DialogLine, DialogMsg, InspectInfo, MarketInfo, SelfState, ChronicleEntry, PoliticsInfo } from "../../shared/protocol.ts";
 import { ITEMS, ITEM_IDS, type ItemGroup, type ItemId, type Slot } from "../../shared/items.ts";
-import { SLOT_NAMES, condLabel } from "../../shared/gear.ts";
+import { SLOT_NAMES, condLabel, usesLeft, usesOf } from "../../shared/gear.ts";
 import { RECIPES, STATION_NAMES, craftMinutes, nearStation, type Station } from "../../shared/crafting.ts";
 import { SKILLS, SKILL_IDS, skillRank, type SkillId } from "../../shared/skills.ts";
 import { INTERACT_RANGE } from "../../shared/constants.ts";
@@ -173,6 +173,11 @@ function renderSelf(s: SelfState) {
     $("busy-label").textContent = s.busy.label;
     ($("busy-fill") as HTMLElement).style.width = `${Math.round(s.busy.progress * 100)}%`;
   } else busy.hidden = true;
+  const owed = (s.debts ?? []).reduce((n, d) => n + d.owe, 0);
+  $("hud-home").innerHTML = (s.home
+    ? `⌂ ${esc(s.home.name)}${s.home.debt ? ` <span class="bad">борг ${s.home.debt}</span>` : ""}`
+    : `<span class="bad">⌂ ніде ночувати</span>`) + (owed ? `<div class="${s.debts.some((d) => d.overdueDays) ? "bad" : ""}">Борги: ${owed} срібла</div>` : "")
+    + (s.equip?.weapon ? (ITEMS[s.equip.weapon.item].uses ? `<div>⚒ ${ITEMS[s.equip.weapon.item].name}: ${usesLeft(s.equip.weapon)}/${usesOf(s.equip.weapon.item)}</div>` : "") : `<div class="muted">⚒ без знаряддя</div>`);
   $("hud-family").innerHTML = (s.family ?? []).map((l) => `<div>❤ ${esc(l)}</div>`).join("");
   const jail = $("jail");
   if (s.jailedUntil) { jail.hidden = false; jail.textContent = `У в'язниці до ${fmtClock(s.jailedUntil)}`; } else jail.hidden = true;
@@ -261,7 +266,7 @@ function skillRows(skills: Partial<Record<string, number>>, all: boolean): strin
 // Character panel (I): gear, bag, stats
 // ---------------------------------------------------------------------------
 
-type CharTab = "gear" | "bag" | "stats";
+type CharTab = "gear" | "bag" | "stats" | "home";
 let charTab: CharTab = "gear";
 let charInfo: CharInfo | null = null;
 let charTimer: number | null = null;
@@ -271,7 +276,11 @@ function openChar(tab?: CharTab) {
   else if (!$("panel-char").hidden) { closePanel("panel-char"); return; }
   openPanel("panel-char");
   net.send({ t: "charinfo" });
-  if (!charTimer) charTimer = window.setInterval(() => { if (charTab === "stats") net.send({ t: "charinfo" }); }, 3000);
+  if (charTab === "home") net.send({ t: "lodging", op: "info" });
+  if (!charTimer) charTimer = window.setInterval(() => {
+    if (charTab === "stats") net.send({ t: "charinfo" });
+    if (charTab === "home") net.send({ t: "lodging", op: "info" });
+  }, 3000);
   renderChar();
 }
 
@@ -293,12 +302,17 @@ function gearTab(s: SelfState): string {
     const w = s.equip?.[slot];
     if (!w) return `<div class="slot empty"><div class="sn">${SLOT_NAMES[slot]}</div><div class="muted">порожньо</div></div>`;
     const cls = w.dur < 25 ? "bad" : w.dur < 50 ? "warn" : "";
+    const tool = ITEMS[w.item].uses !== undefined;
+    const rep = s.repairs?.find((r) => r.slot === slot);
     return `<div class="slot" style="--c:${ITEMS[w.item].color}">
       <div class="sn">${SLOT_NAMES[slot]}</div>
       <div class="it">${ITEMS[w.item].name}</div>
       <div class="muted st">${statText(w.item)}</div>
       <div class="dur ${cls}" title="Стан: ${condLabel(w.dur)}"><i style="width:${w.dur}%"></i></div>
-      <button class="mini" data-unequip="${slot}">Зняти</button>
+      <div class="muted st">${tool ? `міцність ${usesLeft(w)}/${usesOf(w.item)}` : `${condLabel(w.dur)} · ${w.dur}%`}</div>
+      <div class="slot-btns"><button class="mini" data-unequip="${slot}">Зняти</button>
+        ${rep ? `<button class="mini" data-repair="${slot}" ${s.coins < rep.cost ? "disabled" : ""} title="${esc(rep.where)}">Полагодити · ${rep.cost}</button>` : ""}
+        <button class="mini danger" data-discard-slot="${slot}" title="Викинути">✕</button></div>
     </div>`;
   }).join("");
   const spare = ITEM_IDS.filter((i) => ITEMS[i].slot && (s.inv[i] ?? 0) > 0);
@@ -318,6 +332,7 @@ function gearTab(s: SelfState): string {
         <div class="kv"><span>Захист</span><b>${st.armor}</b></div>
         <div class="kv"><span>Вигляд</span><b>${st.presence}</b></div>
         <div class="kv"><span>Сила в бою</span><b>${st.power}</b></div>
+        ${(s.equip && Object.values(s.equip).some((x) => x && x.dur < 100)) && !s.repairs?.length ? `<p class="muted">Полагодити зношене можна біля ковадла (залізні речі — кузня Ульфа) чи верстака (дерев'яні й одяг). У чужій майстерні — за плату власнику, на своїй станції — лише матеріали.</p>` : ""}
         <p class="muted">Сила = атака + захист + навичка «Бій». Хто помітно сильніший за вартового, може відбитися від арешту. Вигляд — як тебе сприймають люди (вибори).</p>
         <h4>Можна вдягнути</h4>${spareHtml}
       </div>
@@ -339,7 +354,7 @@ function bagTab(s: SelfState): string {
     const cards = items.map((i) => {
       const def = ITEMS[i], n = s.inv[i] ?? 0;
       value += def.basePrice * n;
-      const act = def.slot ? `<button class="mini" data-equip="${i}">Вдягнути</button>`
+      const act = def.slot ? `<span class="slot-btns"><button class="mini" data-equip="${i}">Вдягнути</button><button class="mini danger" data-discard-item="${i}" title="Викинути одну">✕</button></span>`
         : def.obj !== undefined ? `<button class="mini" data-place="${i}">Поставити</button>`
         : i === "meal" ? `<button class="mini" data-eat="1">З'їсти</button>` : "";
       return `<div class="card" style="--c:${def.color}"><div class="cn">${def.name}</div><div class="cq">×${n}</div>
@@ -367,6 +382,7 @@ function statsTab(s: SelfState): string {
       <div class="kv"><span>Справи</span><span>${esc(c.businesses.join(", ") || "—")}</span></div>
       <div class="kv"><span>У Каргаті</span><span>${c.daysInWorld !== null ? `${c.daysInWorld} дн.` : "—"}</span></div>
       <div class="kv"><span>Зараз</span><span>${esc(c.location)}</span></div>
+      <div class="kv"><span>Житло</span><span>${s.home ? `${esc(s.home.name)} (${s.home.kind === "house" ? "будинок" : "ліжко"}, ${s.home.price}/ніч)` : `<span class="bad">ніде</span>`}</span></div>
       ${c.lastJailed !== null ? `<div class="kv"><span>Востаннє у в'язниці</span><span>${fmtDayTime(c.lastJailed)}</span></div>` : ""}
       ${c.roles.map((r) => `<div>• ${esc(r)}</div>`).join("")}` : `<div class="muted">Завантаження…</div>`}
       <h4>Стан</h4>
@@ -378,6 +394,8 @@ function statsTab(s: SelfState): string {
       <div class="kv"><span>Сила в бою</span><span>${s.stats.power}</span></div>
       <div class="kv"><span>Вигляд</span><span>${s.stats.presence}</span></div>
       ${gather ? `<div class="kv"><span>Знаряддя</span><span>${gather}</span></div>` : ""}
+      ${s.debts?.length ? `<h4>Борги</h4>${s.debts.map((d) => `<div class="kv ${d.overdueDays ? "bad" : ""}"><span>${esc(d.lender)}</span><span>${d.owe} срібла · ${d.overdueDays ? `прострочено ${d.overdueDays} дн.` : `до ${fmtDayTime(d.due)}`}</span></div>`).join("")}
+        <p class="muted">Віддати — у розмові з кредитором. Прострочений борг росте, а через 3 дні кредитор іде до варти.</p>` : ""}
       ${s.family?.length ? `<h4>Сім'я</h4>${s.family.map((f) => `<div>❤ ${esc(f)}</div>`).join("")}` : ""}
     </div>
     <div>
@@ -395,12 +413,42 @@ function statsTab(s: SelfState): string {
   <p class="muted">Навички ростуть, коли ними користуєшся; вища навичка — швидша робота, ≥30 відкриває роботу поза своїм класом. Репутація — це те, що люди пам'ятають і переказують одне одному, а не очки.</p>`;
 }
 
+let lodging: LodgingInfo | null = null;
+
+function homeTab(s: SelfState): string {
+  const l = lodging;
+  const cur = l?.current;
+  const curHtml = cur
+    ? `<div class="lodge-cur">
+        <div class="kv"><span>Де мешкаєш</span><b>${esc(cur.name)}</b></div>
+        <div class="kv"><span>Що винаймаєш</span><span>${cur.kind === "house" ? "увесь будинок" : "койкомісце (ліжко)"}</span></div>
+        <div class="kv"><span>Плата</span><span>${cur.price} срібла за ніч · щовечора о 21:00</span></div>
+        <div class="kv"><span>Господар</span><span>${esc(cur.landlord)}</span></div>
+        <div class="kv"><span>Мешкаєш з</span><span>${fmtDayTime(cur.since)}</span></div>
+        ${cur.debt ? `<div class="kv bad"><span>Борг за житло</span><b>${cur.debt} срібла</b></div><div class="bad">Не заплатиш кілька ночей — виселять.</div>` : ""}
+        <div class="kv"><span>Зараз</span><span>${cur.here ? `<span class="good">ти вдома — R: повноцінний сон</span>` : "не вдома"}</span></div>
+        <button data-leave="1">З'їхати</button>
+      </div>`
+    : `<div class="lodge-cur bad">Ти ніде не мешкаєш. Спиш де доведеться — сон неглибокий (сил набираєшся у 2,5 раза повільніше).</div>`;
+  const offers = l?.offers ?? [];
+  const rows = offers.map((o) => `<tr>
+      <td>${esc(o.name)}</td><td>${o.kind === "house" ? "увесь будинок" : `ліжко <span class="muted">(вільних ${o.free})</span>`}</td>
+      <td><b>${o.price}</b> срібла/ніч</td><td>${esc(o.landlord)}</td>
+      <td>${o.here ? `<button class="mini" data-rent="${o.area}" data-kind="${o.kind}" ${s.coins < o.price ? "disabled title='Перша ніч наперед'" : ""}>Винайняти</button>` : `<span class="muted">прийди туди</span>`}</td>
+    </tr>`).join("");
+  return `${curHtml}
+    <h4>Можна винайняти</h4>
+    ${offers.length ? `<table class="tbl"><tr><th>Де</th><th>Що</th><th>Ціна</th><th>Господар</th><th></th></tr>${rows}</table>` : `<div class="muted">${l ? "Зараз вільного житла немає." : "Завантаження…"}</div>`}
+    <p class="muted">Домовляються на місці: прийди в таверну чи до будинку й натисни «Винайняти» — перша ніч наперед, далі плата щовечора о 21:00. Цілий будинок — твій: можна ставити там меблі й працювати на своєму верстаку.
+      NPC теж платять за ліжка своїм господарям; хто не платить, того виселяють у таверну.</p>`;
+}
+
 function renderChar() {
   const s = state.self;
   if (!s || $("panel-char").hidden) return;
   $("char-title").textContent = `${s.name}${s.blessing ? " ✦" : ""}`;
   for (const b of $("panel-char").querySelectorAll<HTMLButtonElement>(".char-tabs button")) b.classList.toggle("sel", b.dataset.tab === charTab);
-  $("char-body").innerHTML = charTab === "gear" ? gearTab(s) : charTab === "bag" ? bagTab(s) : statsTab(s);
+  $("char-body").innerHTML = charTab === "gear" ? gearTab(s) : charTab === "bag" ? bagTab(s) : charTab === "home" ? homeTab(s) : statsTab(s);
 }
 
 // ---------------------------------------------------------------------------
@@ -490,12 +538,15 @@ function renderCraft() {
   const inv = s.inv;
   const html = STATION_ORDER.map((st) => {
     const near = nearStation(map, state.myPos.x, state.myPos.y, st);
+    // someone else's workshop: the owner's fee per item
+    const ws = near ? s.workshops?.find((x) => x.station === st) : undefined;
+    const fee = ws && !ws.free ? ws.fee : 0;
     const rows = RECIPES.filter((r) => r.station === st).map((r) => {
       const ins = (Object.entries(r.inputs) as [ItemId, number][]).map(([i, n]) => {
         const have = inv[i] ?? 0;
         return `<span class="${have < n ? "lack" : ""}">${ITEMS[i].name} ${have}/${n}</span>`;
       }).join("");
-      const can = near && (Object.entries(r.inputs) as [ItemId, number][]).every(([i, n]) => (inv[i] ?? 0) >= n);
+      const can = near && s.coins >= fee && (Object.entries(r.inputs) as [ItemId, number][]).every(([i, n]) => (inv[i] ?? 0) >= n);
       const secs = Math.round(craftMinutes(r, s.skills[r.skill]) * 0.4);
       return `<div class="recipe ${can ? "" : "off"}">
         <div><b>${ITEMS[r.out].name}</b>${r.qty > 1 ? ` ×${r.qty}` : ""} <span class="muted">· ${secs} с</span></div>
@@ -503,11 +554,13 @@ function renderCraft() {
         <div class="btns"><button data-craft="${r.id}" data-n="1" ${can ? "" : "disabled"}>Зробити</button><button data-craft="${r.id}" data-n="5" ${can ? "" : "disabled"}>×5</button></div>
       </div>`;
     }).join("");
-    const where = st === "hand" ? "" : near ? ` <span class="muted">· ти поруч ✓</span>` : ` <span class="muted">· ${STATION_WHERE[st]}</span>`;
+    const feeTxt = ws ? (ws.free ? ` · ${esc(ws.label)}: для тебе безкоштовно` : fee > 0 ? ` · <span class="${s.coins < fee ? "bad" : "fee"}">${esc(ws.label)}: плата ${fee} срібла за виріб (${esc(ws.owner)})</span>` : ` · ${esc(ws.label)}: безкоштовно`) : "";
+    const where = st === "hand" ? "" : near ? ` <span class="muted">· ти поруч ✓${feeTxt}</span>` : ` <span class="muted">· ${STATION_WHERE[st]}</span>`;
     return `<div class="craft-group">${STATION_TITLES[st]}${where}</div>${rows}`;
   }).join("");
   $("craft-body").innerHTML = `${html}<p class="muted">Матеріали — збором (F) або на ринку (M). Зроблене з позначкою в сумці можна поставити: клікни на нього. X — розібрати річ поруч.
-    Навичка ремесла (теслярство, ковальство, кравецтво, будівництво, кулінарія) пришвидшує роботу. Одяг і зброю вдягають у вікні «Персонаж» (I).</p>`;
+    Навичка ремесла (теслярство, ковальство, кравецтво, будівництво, кулінарія) пришвидшує роботу. Одяг і зброю вдягають у вікні «Персонаж» (I).
+    Працювати в чужій майстерні (кузня, таверна, склад, чужий дім) — за плату власнику за кожен виріб; ціну встановлює власник. Свої працівники, мешканці й надворі — безкоштовно.</p>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -600,7 +653,8 @@ function renderDialog(d: DialogMsg) {
 function renderArg(d: DialogMsg, opt: string, arg: "person" | "wage" | "text" | "buy" | "amount") {
   const box = $("dlg-arg");
   if (arg === "amount") {
-    box.innerHTML = `<label>Хабар (можна 0) <input id="arg-amount" type="number" min="0" value="0"></label><button id="arg-go">Сказати</button>
+    const label = opt === "borrow" ? "Сума позики (0 — спитати умови)" : opt === "repay" ? "Скільки віддати (0 — усе)" : "Хабар (можна 0)";
+    box.innerHTML = `<label>${label} <input id="arg-amount" type="number" min="0" value="0"></label><button id="arg-go">Сказати</button>
       <span class="muted">У тебе ${state.self?.coins ?? 0} срібла</span>`;
     $("arg-go").onclick = () => net.send({ t: "talk", npcId: d.npcId, opt, price: Number(($("arg-amount") as HTMLInputElement).value) });
     return;
@@ -680,8 +734,9 @@ function stockControls(b: BusinessInfo): string {
 function ledgerTable(b: BusinessInfo): string {
   const rows = (b.ledger ?? []).slice().reverse();
   if (!rows.length) return `<div class="biz-r muted">Журнал: ще немає записів (перший підсумок — о 18:00).</div>`;
-  return `<table class="ledger"><tr><th>День</th><th>Вироблено</th><th>Продано</th><th>Виручка</th><th>Платня</th><th>Невиплати</th></tr>` +
-    rows.map((d) => `<tr><td>${d.day}</td><td>${Math.floor(d.made)}</td><td>${d.sold}</td><td>${d.revenue}</td><td>${d.wages}</td><td class="${d.unpaid ? "bad" : ""}">${d.unpaid || "—"}</td></tr>`).join("") +
+  const extra = rows.some((d) => d.rent || d.fees);
+  return `<table class="ledger"><tr><th>День</th><th>Вироблено</th><th>Продано</th><th>Виручка</th>${extra ? "<th>Оренда / майстерня</th>" : ""}<th>Платня</th><th>Невиплати</th></tr>` +
+    rows.map((d) => `<tr><td>${d.day}</td><td>${Math.floor(d.made)}</td><td>${d.sold}</td><td>${d.revenue}</td>${extra ? `<td>${d.rent ?? 0} / ${d.fees ?? 0}</td>` : ""}<td>${d.wages}</td><td class="${d.unpaid ? "bad" : ""}">${d.unpaid || "—"}</td></tr>`).join("") +
     `</table>`;
 }
 
@@ -699,6 +754,9 @@ function renderBiz(list: BusinessInfo[]) {
       <div class="biz-r">Платня: <b>${b.wage}</b>/день · Працівники ${b.workers.length}/${b.maxWorkers}: ${workers}</div>
       <div class="biz-r">Години: ${b.workHours[0]}:00–${b.workHours[1]}:00 · Продукт: ${b.product ? ITEMS[b.product].name : "—"} · Склад: ${stock} · Каса: ${b.treasury}</div>
       <div class="biz-r muted">Хто може працювати: ${b.allowedClasses.join(", ")}</div>
+      ${b.craftFee !== null || b.bedRent !== undefined ? `<div class="biz-r">${b.craftFee !== null ? `Майстерня для сторонніх: <b>${b.craftFee}</b> срібла за виріб` : ""}${b.bedRent !== undefined ? ` · Ліжко: <b>${b.bedRent}</b> срібла за ніч` : ""}
+        ${b.canSetFees ? `<span class="fees">${b.craftFee !== null ? `<label>за виріб <input type="number" min="0" max="30" value="${b.craftFee}" id="fee-${b.id}"></label><button class="mini" data-fee="${b.id}">Встановити</button>` : ""}
+          ${b.bedRent !== undefined ? `<label>ліжко/ніч <input type="number" min="1" max="30" value="${b.bedRent}" id="bed-${b.id}"></label><button class="mini" data-bed="${b.id}">Встановити</button>` : ""}</span>` : ""}</div>` : ""}
       ${mine ? ledgerTable(b) : ""}
       ${mine ? stockControls(b) : ""}
       ${mine ? `<div class="biz-own">
@@ -729,6 +787,8 @@ function renderBiz(list: BusinessInfo[]) {
     amount: Number(($(`sq-${x.dataset.take}-${x.dataset.item}`) as HTMLInputElement).value) }));
   body.querySelectorAll<HTMLInputElement>("[data-process]").forEach((c) => c.onchange = () => net.send({ t: "biz", op: "process", bizId: c.dataset.process, amount: c.checked ? 1 : 0 }));
   body.querySelectorAll<HTMLInputElement>("[data-autopay]").forEach((c) => c.onchange = () => net.send({ t: "biz", op: "autoPay", bizId: c.dataset.autopay, amount: c.checked ? 1 : 0 }));
+  body.querySelectorAll<HTMLButtonElement>("[data-fee]").forEach((b) => b.onclick = () => net.send({ t: "biz", op: "craftFee", bizId: b.dataset.fee, amount: Number(($(`fee-${b.dataset.fee}`) as HTMLInputElement).value) }));
+  body.querySelectorAll<HTMLButtonElement>("[data-bed]").forEach((b) => b.onclick = () => net.send({ t: "biz", op: "bedRent", bizId: b.dataset.bed, amount: Number(($(`bed-${b.dataset.bed}`) as HTMLInputElement).value) }));
   body.querySelectorAll<HTMLButtonElement>("[data-fire]").forEach((b) => b.onclick = () => net.send({ t: "biz", op: "fire", bizId: b.dataset.biz, workerId: b.dataset.fire }));
 }
 
@@ -807,6 +867,7 @@ export function initUI() {
       case "chronicle": addChronicle(m.entries); break;
       case "politics": renderPolitics(m.info); break;
       case "char": charInfo = m.info; renderChar(); break;
+      case "lodging": lodging = m.info; renderChar(); break;
       case "inbox": {
         chatLine(`<b>Поки тебе не було:</b>`, "away");
         for (const it of m.items) chatLine(`<span class="muted">${fmtDayTime(it.t)}</span> <span class="${it.kind === "bad" ? "bad" : it.kind === "good" ? "good" : ""}">${esc(it.text)}</span>`, "away");
@@ -947,11 +1008,20 @@ export function initUI() {
     const t = e.target as HTMLElement;
     const eq = t.closest("[data-equip]") as HTMLElement | null;
     if (eq) return net.send({ t: "equip", item: eq.dataset.equip as ItemId });
+    const rp = t.closest("[data-repair]") as HTMLElement | null;
+    if (rp) return net.send({ t: "repair", slot: rp.dataset.repair as Slot });
+    const ds = t.closest("[data-discard-slot]") as HTMLElement | null;
+    if (ds) return net.send({ t: "discard", slot: ds.dataset.discardSlot as Slot });
+    const di = t.closest("[data-discard-item]") as HTMLElement | null;
+    if (di) return net.send({ t: "discard", item: di.dataset.discardItem as ItemId });
     const un = t.closest("[data-unequip]") as HTMLElement | null;
     if (un) return net.send({ t: "unequip", slot: un.dataset.unequip as Slot });
     const pl = t.closest("[data-place]") as HTMLElement | null;
     if (pl) { closePanel("panel-char"); bus.emit("build", pl.dataset.place as ItemId); return; }
     if (t.closest("[data-eat]")) net.send({ t: "act", a: "eat" });
+    const rent = t.closest("[data-rent]") as HTMLElement | null;
+    if (rent) return net.send({ t: "lodging", op: "rent", area: rent.dataset.rent, kind: rent.dataset.kind as "bed" | "house" });
+    if (t.closest("[data-leave]")) net.send({ t: "lodging", op: "leave" });
   });
 
   chatLine(`<span class="muted">Ласкаво просимо до Каргата. Натисни <b>H</b> — довідка. <b>Enter</b> — чат з іншими гравцями.</span>`);

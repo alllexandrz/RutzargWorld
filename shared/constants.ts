@@ -30,4 +30,5 @@ export const PERCEPTION_RADIUS = 7;
 /** Radius in which chat/speech bubbles are delivered to nearby players as "local" speech. */
 export const SPEECH_RADIUS = 14;
 
-export const START_COINS = 25;
+/** Enough for a first tool (sickle, axe) and a night or two at the tavern. */
+export const START_COINS = 45;

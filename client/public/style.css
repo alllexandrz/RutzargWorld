@@ -247,3 +247,12 @@ table.ledger th:first-child, table.ledger td:first-child { text-align: left; }
 #politics-body button.sel { border-color: var(--gold); color: var(--gold); }
 #politics-body .line { font-size: 12px; padding: 2px 0; }
 button.danger { border-color: #8a3a2a; color: #e07a6a; }
+
+#hud-home { font-size: 12px; margin-top: 2px; }
+.lodge-cur { background: rgba(0, 0, 0, 0.25); border: 1px solid var(--border); border-radius: 5px; padding: 8px 10px; margin-bottom: 6px; }
+.lodge-cur button { margin-top: 6px; }
+.biz-r .fees { margin-left: 8px; }
+.biz-r .fees input { width: 52px; }
+.craft-group .fee { color: var(--gold); }
+.slot-btns { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
+button.danger, .mini.danger { border-color: #7a3a30; color: #e09080; }

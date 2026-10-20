@@ -53,6 +53,21 @@ export interface SelfState {
   /** Worn clothes, weapon/tool and their condition. */
   equip: Equipment;
   stats: { attack: number; armor: number; presence: number; power: number };
+  /** Where the player lives (null = nowhere: dozing wherever). */
+  home: { area: string; name: string; kind: "bed" | "house"; price: number; debt: number } | null;
+  /** Money owed to townsfolk. */
+  debts: { lender: string; lenderId: string; owe: number; due: number; overdueDays: number }[];
+  /** Repairs possible right here (next to an anvil / workbench), per worn slot. */
+  repairs: { slot: Slot; cost: number; where: string; self: boolean }[];
+  /** Stations in reach and what using them costs (someone else's workshop). */
+  workshops: { station: string; label: string; owner: string; fee: number; free: boolean }[];
+}
+
+export interface LodgingOfferInfo { area: string; name: string; kind: "bed" | "house"; price: number; landlord: string; free: number; here: boolean }
+
+export interface LodgingInfo {
+  current: { area: string; name: string; kind: "bed" | "house"; price: number; landlord: string; debt: number; since: number; here: boolean } | null;
+  offers: LodgingOfferInfo[];
 }
 
 /** Character sheet (panel I) — the heavier part, sent on request. */
@@ -98,12 +113,18 @@ export interface BusinessInfo {
   areaId: string;
   allowedClasses: string[];
   /** Owner only: books for the last days and the purse top-up setting. */
-  ledger?: { day: number; made: number; sold: number; revenue: number; wages: number; unpaid: number }[];
+  ledger?: { day: number; made: number; sold: number; revenue: number; wages: number; unpaid: number; rent?: number; fees?: number }[];
   autoPay?: boolean;
   /** Owner only: where each warehouse item could be sold right now. */
   outlets?: { item: ItemId; name: string; qty: number; marketPrice: number; marketRoom: number; wholesalePrice: number; wholesaleLeft: number }[];
   /** Lumber: currently sawing planks. null = can't process. */
   process?: string | null;
+  /** Fee per craft for outsiders using the stations here (null = no workshop). */
+  craftFee: number | null;
+  /** The tavern: a bed per night. */
+  bedRent?: number;
+  /** The viewer may set the fees (owner; the reeve for the town's). */
+  canSetFees?: boolean;
 }
 
 export interface DialogOption {
@@ -209,7 +230,7 @@ export type C2S =
   | { t: "talk"; npcId: string; opt: string; arg?: string; wage?: number; bizId?: string; price?: number } // opt "keep" = dialog still open (keep-alive)
   | { t: "market"; op: "buy" | "sell"; item: ItemId; qty: number }
   | { t: "openMarket" }
-  | { t: "biz"; op: "list" | "buy" | "setWage" | "deposit" | "withdraw" | "fire" | "commission" | "autoPay" | "sellStock" | "takeStock" | "process";
+  | { t: "biz"; op: "list" | "buy" | "setWage" | "deposit" | "withdraw" | "fire" | "commission" | "autoPay" | "sellStock" | "takeStock" | "process" | "craftFee" | "bedRent";
       bizId?: string; amount?: number; workerId?: string; plotId?: string; item?: ItemId; to?: "market" | "caravan" }
   | { t: "inspect"; id: string }
   | { t: "chronicle" }
@@ -223,6 +244,12 @@ export type C2S =
   /** Put on / take off clothes, weapons, tools. */
   | { t: "equip"; item: ItemId }
   | { t: "unequip"; slot: Slot }
+  /** Have the worn thing in a slot fixed at the workshop you stand in. */
+  | { t: "repair"; slot: Slot }
+  /** Throw away: the thing in a slot, or one copy of an item from the bag. */
+  | { t: "discard"; slot?: Slot; item?: ItemId }
+  /** Lodging: see offers, rent a bed / a whole house where you stand, move out. */
+  | { t: "lodging"; op: "info" | "rent" | "leave"; area?: string; kind?: "bed" | "house" }
   /** Request the character sheet (S2C "char"). */
   | { t: "charinfo" }
   /** Town politics (panel G). Paperwork needs presence at the residence. */
@@ -245,6 +272,7 @@ export type S2C =
   | { t: "toast"; text: string; kind?: "info" | "good" | "bad" }
   | { t: "politics"; info: PoliticsInfo }
   | { t: "char"; info: CharInfo }
+  | { t: "lodging"; info: LodgingInfo }
   /** What happened while the player was offline (summary lines first). */
   | { t: "inbox"; items: { t: number; text: string; kind: string }[] }
   | { t: "teleport"; x: number; y: number }

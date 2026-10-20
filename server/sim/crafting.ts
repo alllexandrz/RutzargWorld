@@ -9,8 +9,8 @@
 import type { World } from "./world.ts";
 import type { Agent, Being, CraftPlan } from "./types.ts";
 import { ITEMS, invAdd, itemForObj, marketBuyPrice, marketPrice, type Inventory, type ItemId } from "../../shared/items.ts";
-import { RECIPES, RECIPE_BY_OUT, STATION_NAMES, STATION_OBJ, craftMinutes, missingInputs, nearStation, recipeById, type Recipe } from "../../shared/crafting.ts";
-import { G, O, areaContains, canPlaceAt, idx, inBounds, isWalkable } from "../../shared/map.ts";
+import { RECIPES, RECIPE_BY_OUT, STATION_NAMES, STATION_OBJ, STATION_RANGE, craftMinutes, missingInputs, nearStation, recipeById, type Recipe } from "../../shared/crafting.ts";
+import { G, O, areaContains, canPlaceAt, findObjNear, idx, inBounds, isWalkable } from "../../shared/map.ts";
 import { changeTile, nearestObj } from "./resources.ts";
 import { skillLevel, trainSkill } from "./skillsys.ts";
 import { marketBuy, marketSell } from "./economy.ts";
@@ -18,7 +18,10 @@ import { newFact, witness } from "./social.ts";
 import { goTo, goToArea } from "./brain.ts";
 import { isChild } from "./family.ts";
 import { reeveId } from "./politics.ts";
-import { equipItem } from "./gear.ts";
+import { equipItem, repairItem, repairQuote } from "./gear.ts";
+import { repairStation } from "../../shared/gear.ts";
+import type { Slot } from "../../shared/items.ts";
+import { workshopAt, type Workshop } from "./housing.ts";
 import { hourOf, dayOf } from "../../shared/time.ts";
 
 const PLACE_RANGE = 2.6;
@@ -32,10 +35,25 @@ export function craftOnce(w: World, b: Being, rec: Recipe): { ok: boolean; reaso
   if (!nearStation(w.map, b.x, b.y, rec.station)) return { ok: false, reason: `Потрібно бути біля: ${STATION_NAMES[rec.station]}` };
   const lack = missingInputs(b.inv, rec);
   if (Object.keys(lack).length) return { ok: false, reason: `Бракує: ${fmtItems(lack)}` };
+  // someone else's workshop: pay the owner's fee for using the station
+  const ws = stationWorkshop(w, b, rec);
+  if (ws && !ws.free && ws.fee > 0) {
+    if (b.coins < ws.fee) return { ok: false, reason: `Плата за майстерню (${ws.label}): ${ws.fee} срібла — бракує грошей` };
+    b.coins -= ws.fee;
+    ws.pay(ws.fee);
+    if (b.kind === "player") w.selfChanged(b.id);
+  }
   for (const [item, n] of Object.entries(rec.inputs) as [ItemId, number][]) invAdd(b.inv, item, -n);
   invAdd(b.inv, rec.out, rec.qty);
   trainSkill(w, b, rec.skill, Math.max(0.3, rec.minutes / 30));
   return { ok: true };
+}
+
+/** The premises of the station used for a recipe (null: by hand or outdoors). */
+export function stationWorkshop(w: World, b: Being, rec: Recipe): Workshop | null {
+  if (rec.station === "hand") return null;
+  const t = findObjNear(w.map, b.x, b.y, STATION_OBJ[rec.station], STATION_RANGE);
+  return t ? workshopAt(w, b, t.x, t.y) : null;
 }
 
 export function fmtItems(m: Partial<Record<ItemId, number>>): string {
@@ -56,6 +74,7 @@ function mayUseBuilding(w: World, b: Being, areaId: string | null): boolean {
   if (!areaId) return true;
   const ag = w.agents.get(b.id);
   if (ag && ag.home === areaId) return true;
+  if (w.players.get(b.id)?.lodging?.area === areaId && w.homes[areaId]?.tenant === b.id) return true;
   for (const biz of w.businesses.values()) if (biz.area === areaId && biz.ownerId === b.id) return true;
   return false;
 }
@@ -136,10 +155,17 @@ function nextStep(w: World, a: Agent, item: ItemId, need: number, plan: CraftPla
 function stationNear(w: World, a: Agent, rec: Recipe): { x: number; y: number } | null {
   if (rec.station === "hand") return { x: a.x, y: a.y };
   // A station in someone else's home is private; workshops and public places are fine.
-  return nearestObj(w, a.x, a.y, STATION_OBJ[rec.station], 60, (x, y) => {
+  const allowed = (x: number, y: number) => {
     const area = buildingArea(w, x, y);
     return !area || area === a.home || !isHome(w, area);
+  };
+  // prefer one that costs nothing (own workplace, outdoors), then any — the fee is paid on use
+  const free = nearestObj(w, a.x, a.y, STATION_OBJ[rec.station], 60, (x, y) => {
+    if (!allowed(x, y)) return false;
+    const ws = workshopAt(w, a, x, y);
+    return !ws || ws.free || ws.fee === 0;
   });
+  return free ?? nearestObj(w, a.x, a.y, STATION_OBJ[rec.station], 60, allowed);
 }
 
 function walkNextTo(w: World, a: Agent, t: { x: number; y: number }): boolean {
@@ -194,6 +220,7 @@ export function doCraft(w: World, a: Agent) {
   const pl = a.craftPlan;
   if (!pl) { a.activity = { type: "idle", label: "стоїть", started: w.time }; a.nextThinkAt = w.time; return; }
   if (w.time - pl.started > 3 * 1440) return dropPlan(w, a, "минуло надто багато часу");
+  if (pl.use.kind === "repair") return doRepair(w, a, pl, pl.use.slot);
 
   // 1) a craft in progress
   if (pl.busyUntil !== undefined) {
@@ -210,7 +237,10 @@ export function doCraft(w: World, a: Agent) {
   if ((a.inv[pl.item] ?? 0) >= pl.qty) return useResult(w, a, pl);
 
   // 3) next step
-  const step = nextStep(w, a, pl.item, pl.qty - (a.inv[pl.item] ?? 0), pl);
+  let step = nextStep(w, a, pl.item, pl.qty - (a.inv[pl.item] ?? 0), pl);
+  // can't make it (no raw materials anywhere) — buy the finished thing if the market has one
+  if (step.kind === "fail" && pl.use.kind !== "sell" && w.marketStock(pl.item) > 0)
+    step = { kind: "buy", item: pl.item, qty: Math.min(pl.qty - (a.inv[pl.item] ?? 0), w.marketStock(pl.item)) };
   if (step.kind === "fail") return fail(w, a, step.why);
   if (step.kind === "buy") {
     if (!areaContains(w.map.areas.market, a.x, a.y)) {
@@ -238,6 +268,23 @@ export function doCraft(w: World, a: Agent) {
   pl.busyUntil = w.time + craftMinutes(rec, skillLevel(a, rec.skill));
   a.activity.label = `майструє: ${ITEMS[rec.out].name.toLowerCase()}`;
   a.anim = "work";
+}
+
+/** Take a worn thing to a workshop and have it fixed. */
+function doRepair(w: World, a: Agent, pl: CraftPlan, slot: Slot) {
+  const worn = a.equip?.[slot];
+  if (!worn || worn.item !== pl.item || worn.dur >= 100) { a.craftPlan = null; a.nextThinkAt = w.time; return; }
+  if (repairQuote(w, a, slot)) {
+    const r = repairItem(w, a, slot);
+    if (!r.ok) return dropPlan(w, a, r.reason);
+    a.craftPlan = null;
+    a.nextThinkAt = w.time;
+    return;
+  }
+  const st = stationNear(w, a, { station: repairStation(worn.item) } as Recipe);
+  if (!st) return fail(w, a, "ніде полагодити");
+  a.activity.label = `несе лагодити: ${ITEMS[worn.item].name.toLowerCase()}`;
+  if (!walkNextTo(w, a, st)) fail(w, a, "не дійти до майстерні");
 }
 
 function useResult(w: World, a: Agent, pl: CraftPlan) {

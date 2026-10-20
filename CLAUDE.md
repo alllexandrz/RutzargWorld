@@ -5,5 +5,5 @@
 - Сервер виконує `.ts` напряму (Node type stripping): лише стираний синтаксис (без `enum`, `namespace`, parameter properties), імпорти з розширенням `.ts`.
 - Сервер авторитетний. Клієнт ніколи не змінює стан світу — лише надсилає наміри (`shared/protocol.ts`).
 - NPC і гравці використовують ті самі системи (`Being`). Нові механіки мають бути доступні NPC (§32 концепту).
-- Перевірка: `npm run typecheck`, `npm run sim -- 5`, `node scripts/craft-test.ts`, `node scripts/offline-test.ts`, `node scripts/politics-test.ts`, `node scripts/gear-test.ts`, `node scripts/smoke-test.ts ws://localhost:<port>/ws` (при запущеному сервері).
+- Перевірка: `npm run typecheck`, `npm run sim -- 5`, `node scripts/craft-test.ts`, `node scripts/offline-test.ts`, `node scripts/politics-test.ts`, `node scripts/gear-test.ts`, `node scripts/housing-test.ts`, `node scripts/tools-test.ts`, `node scripts/smoke-test.ts ws://localhost:<port>/ws` (при запущеному сервері).
 - Мова UI, документації та текстів гри — українська; код і коментарі в коді — англійською.

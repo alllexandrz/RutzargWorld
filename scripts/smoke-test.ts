@@ -104,7 +104,20 @@ await b.walkTo(42.5, 24.5, 300); // through the east gate
 await b.walkTo(tree.x + 0.5, 24.5, 900); // along the road
 const ok = await b.walkTo(tree.x + 0.5, 22.5, 100);
 b.send({ t: "act", a: "gather" });
+await wait(1500);
+check("без сокири дерево не зрубати", (b.self?.inv.wood ?? 0) === 0 && b.got("toast").some((m) => /сокира/.test(m.text)));
+// buy an axe at the market and come back
+await b.walkTo(42.5, 24.5, 900);
+await b.walkTo(22.5, 24.5, 900);
+b.send({ t: "market", op: "buy", item: "axe", qty: 1 });
+await wait(400);
+check("купив сокиру", (b.self?.inv.axe ?? 0) === 1 || b.self?.equip?.weapon?.item === "axe", `монет: ${b.self?.coins}`);
+await b.walkTo(42.5, 24.5, 900);
+await b.walkTo(tree.x + 0.5, 24.5, 900);
+await b.walkTo(tree.x + 0.5, 22.5, 100);
+b.send({ t: "act", a: "gather" });
 await wait(4000);
+check("сокира в руці", b.self?.equip?.weapon?.item === "axe" && (b.self?.equip?.weapon?.dur ?? 100) < 100, `${JSON.stringify(b.self?.equip?.weapon)}`);
 check("збирання деревини", (b.self?.inv.wood ?? 0) >= 1, `дійшов: ${ok}, деревина: ${b.self?.inv.wood ?? 0}`);
 
 // talk to an NPC

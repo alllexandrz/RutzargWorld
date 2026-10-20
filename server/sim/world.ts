@@ -4,7 +4,7 @@
 import { getMap, type GameMap, areaAt } from "../../shared/map.ts";
 import { GAME_MINUTES_PER_SECOND, WORLD_START_MINUTE } from "../../shared/constants.ts";
 import { ITEM_IDS, ITEMS, type ItemId } from "../../shared/items.ts";
-import type { Agent, Being, Business, ChronicleRecord, ConstructionProject, MarketState, Player } from "./types.ts";
+import type { Agent, Being, Business, ChronicleRecord, ConstructionProject, Home, MarketState, Player } from "./types.ts";
 import { createAgents, createBusinesses } from "./seed.ts";
 import { tickAgents } from "./brain.ts";
 import { onHour, onDay } from "./economy.ts";
@@ -15,6 +15,8 @@ import { onHourFamily, tickFamily } from "./family.ts";
 import { bedsShort, onDayHousing, onHourHousing } from "./construction.ts";
 import { onHourCrafting } from "./crafting.ts";
 import { ensureOutfits, onDayGear, onHourGear } from "./gear.ts";
+import { ensureHomes, onHourLodging } from "./housing.ts";
+import { onDayLoans } from "./loans.ts";
 import { firstElectionAt, initialPolitics, onDayPolitics, onHourPolitics } from "./politics.ts";
 import type { Politics } from "./types.ts";
 import { initialResources, onHourResources, type ResourceState } from "./resources.ts";
@@ -42,6 +44,8 @@ export class World {
   res!: ResourceState;
   /** Who rules the town and how (politics.ts). */
   politics: Politics = initialPolitics();
+  /** Who owns each home, rents (server/sim/housing.ts). */
+  homes: Record<string, Home> = {};
   /** Tile changes not yet sent to clients: [x, y, ground, obj]. */
   pendingTiles: [number, number, number, number][] = [];
   /** Municipal treasury: funds the market (it buys from sellers) and town-owned businesses. */
@@ -72,6 +76,7 @@ export class World {
     this.market.wholesale = Object.fromEntries(ITEM_IDS.filter((id) => ITEMS[id].dailyExport > 0).map((id) => [id, ITEMS[id].dailyExport * 3]));
     this.politics.nextElection = firstElectionAt(this.time);
     ensureOutfits(this);
+    ensureHomes(this);
     this.syncClock();
     this.log("Світ Rutzarg прокинувся. Каргат, прикордонне містечко Домініону Варон, зустрічає світанок.", "world");
   }
@@ -164,6 +169,7 @@ export class World {
       onHourResources(this);
       onHourPolitics(this, hour % 24);
       onHourGear(this, hour % 24);
+      onHourLodging(this, hour % 24);
     }
     const day = Math.floor(this.time / 1440);
     if (day !== this.lastDay) {
@@ -172,6 +178,7 @@ export class World {
       onDayHousing(this);
       onDayPolitics(this);
       onDayGear(this);
+      onDayLoans(this);
     }
   }
 

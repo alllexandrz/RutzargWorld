@@ -5,7 +5,7 @@ import type { World } from "./world.ts";
 import type { Player } from "./types.ts";
 import { INPUT_DT, PLAYER_SPEED, INTERACT_RANGE, START_COINS } from "../../shared/constants.ts";
 import { stepMove, facingFromDir } from "../../shared/move.ts";
-import { G, O, areaContains, canPlant, findObjNear, groundAt, buildingAt, getMap, isWalkable, randomSpotIn } from "../../shared/map.ts";
+import { G, O, areaContains, canPlant, findObjNear, groundAt, buildingAt, getMap, idx, isWalkable, randomSpotIn } from "../../shared/map.ts";
 import { ITEMS, invAdd, type ItemId } from "../../shared/items.ts";
 import { buyBusiness, buyMeal, leaveJob, marketBuy, marketSell, mealPrice, sellFromStock } from "./economy.ts";
 import { adjustRel, learnFact, newFact, witness } from "./social.ts";
@@ -20,8 +20,8 @@ import { harvestTile, plantSapling, remaining } from "./resources.ts";
 import { STATION_NAMES, craftMinutes, missingInputs, nearStation, recipeById } from "../../shared/crafting.ts";
 import { craftOnce, fmtItems, pickupNear, placeItem } from "./crafting.ts";
 import { skillLevel } from "./skillsys.ts";
-import { equipItem, starterOutfit, toolBonus, unequip, useTool } from "./gear.ts";
-import { WEAR } from "../../shared/gear.ts";
+import { starterOutfit, toolBonus, toolFor, toolNames, useTool } from "./gear.ts";
+import { atLodging, bedPrice } from "./housing.ts";
 
 const lastMoveAt = new Map<string, number>();
 
@@ -50,7 +50,7 @@ export function tickPlayers(w: World, dt: number) {
     if (p.busy) {
       const progress = (now - p.busy.start) / p.busy.dur;
       if (p.busy.kind === "rest") {
-        p.energy = Math.min(100, p.energy + 2.2 * dt);
+        p.energy = Math.min(100, p.energy + 2.2 * dt * (p.busy.rate ?? 1));
         if (p.energy >= 100) { p.busy = null; w.toast(p.id, "Ти добре відпочив.", "good"); w.selfChanged(p.id); }
       } else if (progress >= 1) completeBusy(w, p);
     }
@@ -90,11 +90,13 @@ function completeBusy(w: World, p: Player) {
   switch (b.kind) {
     case "gather": {
       const item = b.item!;
+      // no tool in hand any more (broke, taken off) — nothing to dig with
+      if (!toolFor(w, p, item)) { w.toast(p.id, `Нема чим працювати: потрібна ${toolNames(item)}.`, "bad"); break; }
       // The resource itself is finite: take one unit from the actual tree / rock / bush.
       if (b.tile && !harvestTile(w, b.tile.x, b.tile.y)) { w.toast(p.id, "Тут уже нічого не лишилося.", "bad"); break; }
       invAdd(p.inv, item, 1);
       p.energy = Math.max(0, p.energy - 1.5);
-      useTool(w, p, item, WEAR.gather);
+      useTool(w, p, item, 1);
       trainSkill(w, p, GATHER_SKILL[item], 0.35);
       let msg = `+1 ${ITEMS[item].name}`;
       if (item === "wood" && Math.random() < 0.25) { invAdd(p.inv, "sapling", 1); msg += ", +1 Саджанець"; }
@@ -102,7 +104,7 @@ function completeBusy(w: World, p: Player) {
       w.toast(p.id, msg, "good");
       // keep gathering automatically while a resource remains in reach
       const next = resourceNear(w, p);
-      if (p.energy > 3 && next && next.item === item) startBusy(w, p, "gather", b.label, gatherTime(p, item), item, next.tile);
+      if (p.energy > 3 && next && next.item === item && toolFor(w, p, item)) startBusy(w, p, "gather", b.label, gatherTime(p, item), item, next.tile);
       break;
     }
     case "craft": {
@@ -204,6 +206,7 @@ export function playerAct(w: World, p: Player, a: "gather" | "eat" | "rest" | "p
     case "cancel": p.busy = null; w.selfChanged(p.id); return;
     case "plant": {
       if ((p.inv.sapling ?? 0) < 1) return w.toast(p.id, "Немає саджанців. Їх дає рубка дерев, або купи на ринку.", "bad");
+      if (!toolFor(w, p, "sapling")) return w.toast(p.id, "Щоб посадити дерево, потрібна лопата.", "bad");
       // prefer a stump nearby, else any free spot next to the player
       let spot: { x: number; y: number } | null = findObjNear(w.map, p.x, p.y, O.STUMP, 1.6);
       if (!spot) {
@@ -213,6 +216,7 @@ export function playerAct(w: World, p: Player, a: "gather" | "eat" | "rest" | "p
       }
       if (!spot || !plantSapling(w, spot.x, spot.y)) return w.toast(p.id, "Тут не можна садити (лише поза містом, на траві, землі чи пні).", "bad");
       invAdd(p.inv, "sapling", -1);
+      useTool(w, p, "sapling", 1);
       trainSkill(w, p, "woodcutting", 0.2);
       w.toast(p.id, "Саджанець посаджено. За 3 дні виросте дерево.", "good");
       w.selfChanged(p.id);
@@ -223,6 +227,9 @@ export function playerAct(w: World, p: Player, a: "gather" | "eat" | "rest" | "p
       if (!found) return w.toast(p.id, "Поруч немає ресурсів. Підійди до дерева, скелі (камінь/руда), трав або поля.", "bad");
       const item = found.item;
       if (p.energy < 3) return w.toast(p.id, "Ти надто втомлений. Відпочинь.", "bad");
+      // resources are extracted with tools: axe, pickaxe, sickle...
+      const tool = toolFor(w, p, item);
+      if (!tool) return w.toast(p.id, `Голими руками не вийде: для «${ITEMS[item].name}» потрібна ${toolNames(item)}. Купи на ринку (M), викуй у кузні або позич грошей у лихваря Горста.`, "bad");
       if (item === "grain" && !p.lastTalkReward["farm_warned"]) {
         p.lastTalkReward["farm_warned"] = 1;
         const irma = w.agents.get("irma");
@@ -247,9 +254,15 @@ export function playerAct(w: World, p: Player, a: "gather" | "eat" | "rest" | "p
       return w.toast(p.id, "Немає їжі. Купи на ринку або поїж у таверні.", "bad");
     }
     case "rest": {
-      if (!buildingAt(w.map, p.x, p.y) && !w.isJailed(p) && !findObjNear(w.map, p.x, p.y, O.BED, 1.6))
-        return w.toast(p.id, "Відпочивати безпечно лише в будівлі (таверна, храм, будинок) або біля ліжка.", "bad");
-      startBusy(w, p, "rest", "Відпочиває", 1e9);
+      // proper sleep only at home (a rented bed / house) or next to one's own bed; elsewhere you doze where you can
+      const ownBed = findObjNear(w.map, p.x, p.y, O.BED, 1.6, (x, y) => w.res.placed[idx(x, y)]?.by === p.id);
+      if (w.isJailed(p) || atLodging(w, p) || ownBed) { startBusy(w, p, "rest", "Відпочиває", 1e9, undefined, undefined, { rate: 1 }); return; }
+      if (areaContains(w.map.areas.tavern, p.x, p.y) && !atLodging(w, p))
+        w.toast(p.id, `Ліжка в таверні — для тих, хто заплатив (${bedPrice(w, "tavern")} срібла за ніч, вікно «Персонаж» → «Житло»). Поки дрімаєш на лаві.`, "info");
+      else w.toast(p.id, buildingAt(w.map, p.x, p.y)
+        ? "Ти тут не мешкаєш — дрімаєш абияк, сон неглибокий. Орендуй житло: «Персонаж» (I) → «Житло»."
+        : "Ночуєш просто неба — сон тривожний і неглибокий. Орендуй житло: «Персонаж» (I) → «Житло».", "info");
+      startBusy(w, p, "rest", p.lodging ? "Дрімає (не вдома)" : "Дрімає де доведеться", 1e9, undefined, undefined, { rate: 0.4 });
       return;
     }
     case "pray": {
@@ -292,6 +305,15 @@ export function playerBiz(w: World, p: Player, op: string, bizId?: string, amoun
       if (!r.ok) return w.toast(p.id, r.reason, "bad");
       w.say(w.politics.reeve, `Вітаю, ${p.name}. Тепер «${b.name}» належить тобі. Не забувай платити людям.`);
       w.toast(p.id, `Ти власник «${b.name}»! Наймай людей через розмову з ними.`, "good");
+      return;
+    }
+    case "craftFee":
+    case "bedRent": {
+      const may = owner || (b.ownerId === "town" && w.politics.reeve === p.id);
+      if (!may) return w.toast(p.id, "Ціни тут встановлює власник (для справ громади — староста).", "bad");
+      const v = Math.max(0, Math.min(30, Math.floor(amount ?? 0)));
+      if (op === "craftFee") { b.craftFee = v; w.toast(p.id, `«${b.name}»: плата за користування майстернею — ${v} срібла за виріб.`, "info"); }
+      else if (b.id === "tavern") { b.bedRent = Math.max(1, v); w.toast(p.id, `«${b.name}»: ліжко — ${b.bedRent} срібла за ніч.`, "info"); }
       return;
     }
     case "setWage":

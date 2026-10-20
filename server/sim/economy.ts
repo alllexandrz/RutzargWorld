@@ -11,8 +11,8 @@ import { requestJobDecision } from "./brain.ts";
 import { isOwnerWorker } from "./seed.ts";
 import { canWorkAt, SKILL_OF, skillLevel, trainSkill } from "./skillsys.ts";
 import { skillMult } from "../../shared/skills.ts";
-import { toolBonus, useTool } from "./gear.ts";
-import { WEAR } from "../../shared/gear.ts";
+import { supplyTool, toolBonus, toolFor, useTool } from "./gear.ts";
+import { JOB_TOOL } from "../../shared/gear.ts";
 import { buildHour } from "./construction.ts";
 import { digDeposit, fellTrees } from "./resources.ts";
 
@@ -299,14 +299,27 @@ export function onHour(w: World, hour: number) {
   }
 }
 
-const WORK_RESOURCE: Partial<Record<string, ItemId>> = { lumber: "wood", mine: "ore", quarry: "stone", farm: "grain" };
+const WORK_RESOURCE: Partial<Record<string, ItemId>> = { lumber: "wood", mine: "ore", quarry: "stone", farm: "grain", construction: "sapling" };
+
+/** Last day a worker was told off for having no tool (log once a day). */
+const noToolDay = new Map<string, number>();
 
 function produce(w: World, b: Business, workerId: string) {
   const worker = w.being(workerId);
   const skill = SKILL_OF[b.kind];
+  // No tool, no work: a lumberjack needs an axe, a miner a pickaxe, a builder a shovel...
+  const res = WORK_RESOURCE[b.kind] ?? b.product ?? "wood";
+  if (worker && JOB_TOOL[b.kind] && !toolFor(w, worker, res) && !supplyTool(w, b, worker)) {
+    if ((noToolDay.get(worker.id) ?? -1) !== dayOf(w.time)) {
+      noToolDay.set(worker.id, dayOf(w.time));
+      w.log(`${worker.name} не може працювати в «${b.name}»: немає знаряддя (${ITEMS[JOB_TOOL[b.kind]].name.toLowerCase()}).`, "economy");
+      if (w.agents.has(worker.id)) w.say(worker.id, `Без знаряддя тут робити нічого... Де б узяти ${ITEMS[JOB_TOOL[b.kind]].name.toLowerCase()}?`);
+    }
+    return;
+  }
   // Every worked hour trains the job's skill — learning by doing.
   if (worker && skill && b.kind !== "construction") trainSkill(w, worker, skill, 1);
-  if (b.kind === "construction") { buildHour(w, workerId); return; }
+  if (b.kind === "construction") { buildHour(w, workerId); if (worker) useTool(w, worker, res, 1); return; }
   if (b.kind === "trade") {
     const a = w.agents.get(workerId);
     const mult = worker ? skillMult(skillLevel(worker, "trading")) : 1;
@@ -315,9 +328,7 @@ function produce(w: World, b: Business, workerId: string) {
   }
   if (!b.product) return;
   // the right tool in hand (axe, pickaxe, sickle) beats a generic tool kit in the bag
-  const res = WORK_RESOURCE[b.kind] ?? b.product;
   const heldBonus = worker ? 1 + toolBonus(worker, res) : 1;
-  if (worker && heldBonus > 1) useTool(w, worker, res, WEAR.workHour);
   const toolBonus_ = Math.max(heldBonus, worker && (worker.inv.tools ?? 0) > 0 ? 1.3 : 1);
   const tiredPenalty = worker && worker.energy < 15 ? 0.5 : 1;
   const amount = b.rate * toolBonus_ * tiredPenalty * (worker && skill ? skillMult(skillLevel(worker, skill)) : 1);
@@ -338,6 +349,7 @@ function produce(w: World, b: Business, workerId: string) {
     made = got;
   }
   b.stock[b.product] = (b.stock[b.product] ?? 0) + made;
+  if (worker && JOB_TOOL[b.kind]) useTool(w, worker, res, 1); // a worked hour = one use of the tool
   ledgerToday(w, b).made += made;
   // Sawing: each worker-hour turns up to 3 wood from the yard into 6 planks.
   if (b.process === "plank" && b.product === "wood") {

@@ -2,6 +2,7 @@
 // Dialogue never changes the world by itself — world-changing options (job offers, gifts)
 // go through the engine. Free-form lines may use the LLM; templates are the fallback.
 
+import { borrow, owedTo, repay } from "./loans.ts";
 import type { World } from "./world.ts";
 import type { Agent, Player } from "./types.ts";
 import type { DialogLine, DialogMsg, DialogOption } from "../../shared/protocol.ts";
@@ -59,6 +60,9 @@ function options(w: World, p: Player, a: Agent): DialogOption[] {
   if (offerable(w, p, a).length) o.push({ id: "offer", label: "Запропонувати роботу", arg: "wage" });
   if (sellable(w, p, a).length) o.push({ id: "buybiz", label: "Запропонувати викупити справу", arg: "buy" });
   o.push({ id: "gift", label: "Подарувати 5 срібла" });
+  const owe = owedTo(p, a.id);
+  if (owe > 0) o.push({ id: "repay", label: `Віддати борг (${owe} срібла)`, arg: "amount" });
+  else o.push({ id: "borrow", label: a.profession === "moneylender" ? "Позичити грошей під відсотки" : "Попросити в борг", arg: "amount" });
   // Politics
   const P = w.politics;
   if (P.election && P.election.candidates.includes(p.id) && (a.flags[`camp_${p.id}`] ?? -1) < P.election.startedAt) o.push({ id: "campaign", label: "Агітувати: «Голосуй за мене»" });
@@ -513,6 +517,18 @@ export function playerTalk(w: World, p: Player, npcId: string, opt: string, extr
         const r = signPetition(w, a);
         push(p, a, a.name, r.ok ? `Давай перо. ${ap < 0 ? `Досить терпіти ${w.nameOf(reeveId(w))}.` : "Роблю це заради тебе."} (${w.politics.petition.length}/${petitionNeeded(w)})` : r.reason);
       } else push(p, a, a.name, ap > 0.3 ? `Відставку? ${w.nameOf(reeveId(w))} — добрий староста. Ні.` : "Не хочу в це встрявати.");
+      break;
+    }
+    case "borrow": {
+      const amount = Math.floor(extra.price ?? 0);
+      push(p, a, p.name, amount > 0 ? `Позич мені ${amount} срібла.` : "Чи не позичиш грошей?");
+      push(p, a, a.name, borrow(w, a, p, amount).reply);
+      break;
+    }
+    case "repay": {
+      const amount = Math.floor(extra.price ?? 0);
+      push(p, a, p.name, "Ось, віддаю борг.");
+      push(p, a, a.name, repay(w, a, p, amount > 0 ? amount : undefined).reply);
       break;
     }
     case "conspire": {

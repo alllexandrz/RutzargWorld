@@ -2,6 +2,7 @@
 // Every worn thing is an ordinary item: crafted, bought, sold, stolen... and it wears out with use.
 
 import { ITEMS, type ItemId, type Slot } from "./items.ts";
+import { RECIPE_BY_OUT } from "./crafting.ts";
 
 export const SLOTS: Slot[] = ["head", "body", "legs", "feet", "weapon", "offhand"];
 
@@ -44,13 +45,44 @@ export function gearStats(eq: Equipment | undefined, combatSkill = 0): CharStats
   return { attack: r(attack), armor: r(armor), presence: r(presence), power: r(power), gather };
 }
 
-/** Condition loss per use. Tools/weapons wear when used, clothes wear daily. */
+/** Condition loss. Tools wear per use (100 / uses per unit gathered or made), clothes daily, arms in fights. */
 export const WEAR = {
-  gather: 1,      // per gathered unit (player)
-  workHour: 1,    // per worked hour with the tool (NPC jobs)
   daily: 3,       // clothes and armour, every day
   fight: 3,       // weapon and armour in a scuffle
 };
+
+/** Which tools can extract a resource (the first is the proper one). Nothing is gathered bare-handed. */
+export const TOOL_FOR: Partial<Record<ItemId, ItemId[]>> = {
+  wood: ["axe"], ore: ["pickaxe"], stone: ["pickaxe"], grain: ["sickle"], herbs: ["sickle", "knife"], sapling: ["shovel"],
+};
+
+/** Jobs that need a tool in hand to work at all. */
+export const JOB_TOOL: Record<string, ItemId> = { lumber: "axe", mine: "pickaxe", quarry: "pickaxe", farm: "sickle", construction: "shovel" };
+
+export function usesOf(item: ItemId): number {
+  return ITEMS[item].uses ?? 100;
+}
+
+/** Condition (0..100) lost per use of a tool. Non-tools wear 1 per use. */
+export function wearPerUse(item: ItemId): number {
+  return 100 / usesOf(item);
+}
+
+/** Uses left in a worn tool. */
+export function usesLeft(w: Worn): number {
+  return Math.max(0, Math.round((w.dur / 100) * usesOf(w.item)));
+}
+
+/** A craftsman fixes it: iron things on an anvil, wood/cloth on a workbench. */
+export function repairStation(item: ItemId): "anvil" | "workbench" {
+  return RECIPE_BY_OUT[item]?.station === "anvil" || RECIPE_BY_OUT[item]?.station === "forge" ? "anvil" : "workbench";
+}
+
+/** Price of a repair at someone else's workshop (work + materials). Fixing it yourself costs a third (materials only). */
+export function repairCost(w: Worn, self = false): number {
+  const full = Math.max(1, Math.ceil(ITEMS[w.item].basePrice * (100 - w.dur) / 100 * 0.6));
+  return self ? Math.max(1, Math.ceil(full / 3)) : full;
+}
 
 export function condLabel(dur: number): string {
   if (dur >= 80) return "нове";

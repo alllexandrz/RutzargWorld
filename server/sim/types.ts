@@ -52,7 +52,7 @@ export type FactType =
   // politics
   | "election_called" | "candidate" | "elected" | "coup" | "coup_failed" | "conspiracy" | "embezzle"
   | "privatized" | "tax_change" | "donation" | "vote_buying" | "pardon"
-  | "resisted";
+  | "resisted" | "loan";
 
 /** Something that (supposedly) happened in the world. May be false in a character's head. */
 export interface Fact {
@@ -174,7 +174,8 @@ export type CraftUse =
   | { kind: "deliver"; project: string }
   | { kind: "sell" }
   | { kind: "keep" }
-  | { kind: "equip" };
+  | { kind: "equip" }
+  | { kind: "repair"; slot: "weapon" | "head" | "body" | "legs" | "feet" | "offhand" };
 
 export interface CraftPlan {
   item: ItemId;
@@ -201,7 +202,7 @@ export interface Player extends Being {
   lastInputSeq: number;
   moveDir: { x: number; y: number };
   inputBudget: number;
-  busy: { kind: "gather" | "eat" | "rest" | "pray" | "craft"; label: string; start: number; dur: number; item?: ItemId; tile?: { x: number; y: number }; recipe?: string; left?: number } | null;
+  busy: { kind: "gather" | "eat" | "rest" | "pray" | "craft"; label: string; start: number; dur: number; item?: ItemId; tile?: { x: number; y: number }; recipe?: string; left?: number; rate?: number } | null;
   ownedBusinesses: string[];
   blessing: boolean;
   /** Real-time ms of the last dialogue reward (anti-spam). */
@@ -212,6 +213,10 @@ export interface Player extends Being {
   offlineSince?: number;
   /** Game minute the character first came to Karhat. */
   joinedAt?: number;
+  /** Money borrowed from townsfolk (server/sim/loans.ts). */
+  loans?: { lender: string; principal: number; owe: number; due: number; since: number; overdueDays: number; reported?: boolean }[];
+  /** Where the player lives: a rented bed or a whole house. */
+  lodging?: { area: string; kind: "bed" | "house"; since: number; debt: number; paidNight: number } | null;
 }
 
 export type BusinessKind = "lumber" | "mine" | "quarry" | "farm" | "smithy" | "tavern" | "guard" | "temple" | "admin" | "trade" | "construction";
@@ -256,9 +261,31 @@ export interface Business {
   autoPay?: boolean;
   /** Lumber camps: saw the felled wood into planks and sell those instead. */
   process?: "plank";
+  /** Fee per craft for outsiders using a station on the premises (undefined = owner's default). */
+  craftFee?: number;
+  /** The tavern: price of a bed per night. */
+  bedRent?: number;
 }
 
-export interface LedgerDay { day: number; made: number; sold: number; revenue: number; wages: number; unpaid: number; tax?: number }
+export interface LedgerDay { day: number; made: number; sold: number; revenue: number; wages: number; unpaid: number; tax?: number; rent?: number; fees?: number }
+
+/** A home and who owns it (server/sim/housing.ts). */
+export interface Home {
+  /** Being id, "town", or null when a business runs it (`biz`). */
+  owner: string | null;
+  /** The tavern: rent goes to the business till, the owner sets the price (`Business.bedRent`). */
+  biz?: string;
+  /** Per night for one bed (койкомісце). */
+  bedRent: number;
+  /** Per night for the whole house; null = not let as a whole. */
+  houseRent: number | null;
+  /** Who rents the whole house. */
+  tenant: string | null;
+  /** Temple, residence: staff housing, not for rent. */
+  rentable: boolean;
+  /** Fee for using a station here (null = owner's default). */
+  craftFee?: number;
+}
 
 /** Who rules Kargat and how firmly (a small-scale prototype of faction politics, concept §3.5–3.6). */
 export interface Politics {

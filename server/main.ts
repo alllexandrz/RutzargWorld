@@ -16,7 +16,7 @@ import { restore, snapshot } from "./persist.ts";
 import { createStorage } from "./storage.ts";
 import { computeStats } from "./stats.ts";
 import { accountFromSession, authConfig, handleAuth } from "./auth.ts";
-import type { C2S, S2C, EntSnap, SelfState, BusinessInfo, InspectInfo, Look, PoliticsInfo } from "../shared/protocol.ts";
+import type { C2S, S2C, EntSnap, SelfState, BusinessInfo, InspectInfo, LodgingInfo, Look, PoliticsInfo } from "../shared/protocol.ts";
 import { GAME_MINUTES_PER_SECOND, SERVER_TICK_HZ, SNAPSHOT_HZ } from "../shared/constants.ts";
 import { ITEM_IDS, ITEMS, marketBuyPrice, marketPrice, type ItemId } from "../shared/items.ts";
 import { applyInput, awaySummary, createPlayer, playerPolitics, playerAct, playerBiz, playerCraft, playerMarket, playerPickpocket, playerPickup, playerPlace, resetConnection, resetPlayerOnJoin } from "./sim/players.ts";
@@ -26,10 +26,12 @@ import { atResidence, guards, isPrivatisable, petitionNeeded, tally, TAX_STEPS }
 import { CLASS_NAMES, FACTION_NAMES, type Player } from "./sim/types.ts";
 import { llmDescription, llmProbe, llmStatus } from "./ai/llm.ts";
 import { familySummary, isChild } from "./sim/family.ts";
-import { commissionPlot, plotStates } from "./sim/construction.ts";
-import { MAP_W, areaContains } from "../shared/map.ts";
-import { equipItem, statsOf, unequip } from "./sim/gear.ts";
+import { bedsUsed, commissionPlot, plotStates } from "./sim/construction.ts";
+import { MAP_W, areaContains, findObjNear } from "../shared/map.ts";
+import { discard, equipItem, repairItem, repairQuote, statsOf, unequip } from "./sim/gear.ts";
 import { charInfo } from "./sim/charsheet.ts";
+import { atLodging, bedPrice, livesFree, defaultCraftFee, hasWorkshop, landlordName, leaveLodging, lodgingOffers, rentLodging, workshopAt } from "./sim/housing.ts";
+import { STATION_OBJ, STATION_RANGE } from "../shared/crafting.ts";
 import { SLOTS, SLOT_NAMES, condLabel } from "../shared/gear.ts";
 import type { Being } from "./sim/types.ts";
 
@@ -127,6 +129,35 @@ function selfState(p: Player): SelfState {
     skills: roundSkills(p.skills),
     equip: Object.fromEntries(Object.entries(p.equip ?? {}).map(([k, v]) => [k, { item: v.item, dur: Math.round(v.dur) }])),
     stats: (({ attack, armor, presence, power }) => ({ attack, armor, presence, power }))(statsOf(p)),
+    home: p.lodging ? {
+      area: p.lodging.area, name: world.map.areas[p.lodging.area]?.name ?? p.lodging.area, kind: p.lodging.kind, debt: p.lodging.debt,
+      price: p.lodging.kind === "house" ? world.homes[p.lodging.area]?.houseRent ?? 0 : bedPrice(world, p.lodging.area),
+    } : null,
+    workshops: nearWorkshops(p),
+    debts: (p.loans ?? []).map((l) => ({ lender: world.nameOf(l.lender), lenderId: l.lender, owe: l.owe, due: l.due, overdueDays: l.overdueDays })),
+    repairs: SLOTS.map((slot) => ({ slot, q: repairQuote(world, p, slot) })).filter((x) => x.q).map(({ slot, q }) => ({ slot, cost: q!.cost, where: q!.where, self: q!.self })),
+  };
+}
+
+function nearWorkshops(p: Player): SelfState["workshops"] {
+  const out: SelfState["workshops"] = [];
+  for (const [st, obj] of Object.entries(STATION_OBJ)) {
+    const t = findObjNear(world.map, p.x, p.y, obj, STATION_RANGE);
+    const ws = t ? workshopAt(world, p, t.x, t.y) : null;
+    if (ws) out.push({ station: st, label: ws.label, owner: ws.owner, fee: ws.fee, free: ws.free });
+  }
+  return out;
+}
+
+function lodgingInfo(p: Player): LodgingInfo {
+  const l = p.lodging;
+  return {
+    current: l ? {
+      area: l.area, name: world.map.areas[l.area]?.name ?? l.area, kind: l.kind, debt: l.debt, since: l.since,
+      price: l.kind === "house" ? world.homes[l.area]?.houseRent ?? 0 : bedPrice(world, l.area),
+      landlord: landlordName(world, l.area), here: atLodging(world, p),
+    } : null,
+    offers: lodgingOffers(world, p, (a) => bedsUsed(world, a)),
   };
 }
 
@@ -161,6 +192,9 @@ function bizList(viewer?: string): BusinessInfo[] {
     workers: b.workers.map((id) => ({ id, name: world.nameOf(id), unpaidDays: b.unpaidDays[id] ?? 0 })),
     treasury: Math.floor(b.treasury), stock: Object.fromEntries(Object.entries(b.stock).map(([k, v]) => [k, Math.floor(v ?? 0)])),
     product: b.product, workHours: b.workHours, areaId: b.area, allowedClasses: b.allowedClasses.map((c) => CLASS_NAMES[c]),
+    craftFee: hasWorkshop(world, b) ? b.craftFee ?? defaultCraftFee(world, b) : null,
+    ...(b.id === "tavern" ? { bedRent: bedPrice(world, "tavern") } : {}),
+    canSetFees: !!viewer && (b.ownerId === viewer || (b.ownerId === "town" && world.politics.reeve === viewer)),
   }));
 }
 
@@ -207,7 +241,7 @@ function inspect(id: string): InspectInfo | null {
       location: world.areaName(a.x, a.y),
       family: familySummary(world, a),
       skills: roundSkills(a.skills),
-      home: world.map.areas[a.home]?.name ?? a.home,
+      home: `${world.map.areas[a.home]?.name ?? a.home}${livesFree(world, a, a.home) ? "" : ` — ліжко за ${bedPrice(world, a.home)}/ніч (${landlordName(world, a.home)})`}${a.flags.rentDebt ? `, борг ${a.flags.rentDebt}` : ""}`,
       gear: gearLines(a),
     };
   }
@@ -275,6 +309,7 @@ async function joinWorld(s: Session, m: Extract<C2S, { t: "join" }>) {
   send(s, { t: "chronicle", entries: world.chronicle.slice(-80) });
   send(s, { t: "plots", plots: plotStates(world) });
   if (awayReport.length) send(s, { t: "inbox", items: awayReport });
+  if (!p.lodging) send(s, { t: "toast", text: "Тобі ніде ночувати. Ліжко в таверні чи будинок можна винайняти: «Персонаж» (I) → «Житло».", kind: "info" });
   // all tiles that differ from the generated map (felled trees, planted saplings, mined rocks)
   send(s, { t: "tiles", changes: Object.entries(world.res.overrides).map(([k, [g, o]]) => [Number(k) % MAP_W, Math.floor(Number(k) / MAP_W), g, o] as [number, number, number, number]) });
 }
@@ -323,7 +358,28 @@ function handle(s: Session, m: C2S) {
       s.selfDirty = true;
       break;
     }
+    case "repair":
+    case "discard": {
+      if (world.isJailed(p)) { send(s, { t: "toast", text: "У в'язниці не до того.", kind: "bad" }); break; }
+      const r = m.t === "repair" ? (SLOTS.includes(m.slot) ? repairItem(world, p, m.slot) : { ok: false, reason: "Немає такого місця" })
+        : discard(world, p, { slot: m.slot && SLOTS.includes(m.slot) ? m.slot : undefined, item: m.item });
+      send(s, { t: "toast", text: r.reason, kind: r.ok ? "good" : "bad" });
+      s.selfDirty = true;
+      break;
+    }
     case "charinfo": send(s, { t: "char", info: charInfo(world, p) }); break;
+    case "lodging": {
+      if (m.op === "rent") {
+        const r = rentLodging(world, p, String(m.area ?? ""), m.kind === "house" ? "house" : "bed", (a) => bedsUsed(world, a));
+        send(s, { t: "toast", text: r.reason, kind: r.ok ? "good" : "bad" });
+      } else if (m.op === "leave") {
+        const r = leaveLodging(world, p);
+        send(s, { t: "toast", text: r.reason, kind: r.ok ? "info" : "bad" });
+      }
+      send(s, { t: "lodging", info: lodgingInfo(p) });
+      s.selfDirty = true;
+      break;
+    }
     case "politics": {
       const r = playerPolitics(world, p, m);
       if (r) send(s, { t: "toast", text: r.reason, kind: r.ok ? "good" : "bad" });

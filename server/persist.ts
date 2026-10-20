@@ -5,9 +5,10 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname } from "node:path";
 import { firstElectionAt, initialPolitics } from "./sim/politics.ts";
 import { ensureOutfits } from "./sim/gear.ts";
+import { ensureHomes } from "./sim/housing.ts";
 import { setTownRep } from "./sim/economy.ts";
 import type { World } from "./sim/world.ts";
-import type { Agent, Business, ChronicleRecord, ConstructionProject, MarketState, Player, Politics } from "./sim/types.ts";
+import type { Agent, Business, ChronicleRecord, ConstructionProject, Home, MarketState, Player, Politics } from "./sim/types.ts";
 import type { PlotStage } from "../shared/map.ts";
 import { applyPlot } from "../shared/map.ts";
 import { createBusinesses } from "./sim/seed.ts";
@@ -34,6 +35,7 @@ export interface SaveFile {
   mapSize?: number;
   plotStage?: Record<string, PlotStage>;
   politics?: Politics;
+  homes?: Record<string, Home>;
 }
 
 /** Serialisable snapshot of the whole world (runtime-only fields stripped). */
@@ -54,6 +56,7 @@ export function snapshot(w: World): SaveFile {
     plotStage: w.map.plotStage,
     res: w.res,
     politics: w.politics,
+    homes: w.homes,
     mapSize: MAP_W,
   };
 }
@@ -117,6 +120,8 @@ export function restore(w: World, data: SaveFile): boolean {
     w.politics = data.politics ?? { ...initialPolitics(), nextElection: firstElectionAt(w.time) };
     setTownRep(w.politics.reeve);
     ensureOutfits(w);
+    w.homes = data.homes ?? {};
+    ensureHomes(w);
     w.syncClock();
     return true;
   } catch (e) {

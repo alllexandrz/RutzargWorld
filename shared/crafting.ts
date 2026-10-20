@@ -70,6 +70,7 @@ export const RECIPES: Recipe[] = [
   r("knife", 1, { iron: 1 }, "anvil", "smithing", 15),
   r("sickle", 1, { iron: 1 }, "anvil", "smithing", 20),
   r("axe", 1, { iron: 1, plank: 1 }, "anvil", "smithing", 25),
+  r("shovel", 1, { iron: 1, plank: 1 }, "anvil", "smithing", 20),
   r("pickaxe", 1, { iron: 2, plank: 1 }, "anvil", "smithing", 30),
   r("spear", 1, { iron: 1, plank: 2 }, "anvil", "smithing", 25),
   r("sword", 1, { iron: 3 }, "anvil", "smithing", 50),

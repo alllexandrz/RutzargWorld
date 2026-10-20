@@ -10,7 +10,7 @@ export type ItemId =
   | "lamp" | "workbench" | "forge" | "anvil" | "hearth" | "well"
   // things worn or held (shared/gear.ts)
   | "cap" | "helmet" | "shirt" | "svyta" | "chainmail" | "trousers" | "lychaky" | "boots"
-  | "club" | "knife" | "axe" | "pickaxe" | "sickle" | "spear" | "sword" | "shield";
+  | "club" | "knife" | "axe" | "pickaxe" | "sickle" | "shovel" | "spear" | "sword" | "shield";
 
 export type ItemGroup = "raw" | "material" | "placeable" | "wear";
 
@@ -41,6 +41,8 @@ export interface ItemDef {
   /** Wearable items: the slot and what it gives. */
   slot?: Slot;
   stats?: GearStats;
+  /** Tools: how many uses (gathered units / work) a new one lasts. */
+  uses?: number;
 }
 
 // Object ids mirror shared/map.ts `O` (kept as literals: map.ts must not depend on items.ts and vice versa).
@@ -91,10 +93,11 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   lychaky: wear("lychaky", "Личаки", 3, "feet", { armor: 0.5 }, "#b49a6a"),
   boots: wear("boots", "Чоботи", 16, "feet", { armor: 1, presence: 2 }, "#4a3a2a"),
   club: wear("club", "Кийок", 4, "weapon", { attack: 3 }, "#7a5a32"),
-  knife: wear("knife", "Ніж", 16, "weapon", { attack: 4, gather: { herbs: 0.3 } }, "#b8c0c8"),
-  axe: wear("axe", "Сокира", 22, "weapon", { attack: 5, gather: { wood: 0.6 } }, "#a8b0b8"),
-  pickaxe: wear("pickaxe", "Кайло", 34, "weapon", { attack: 4, gather: { ore: 0.6, stone: 0.6 } }, "#98a0a8"),
-  sickle: wear("sickle", "Серп", 16, "weapon", { attack: 2, gather: { grain: 0.6, herbs: 0.4 } }, "#c0c8d0"),
+  knife: { ...wear("knife", "Ніж", 16, "weapon", { attack: 4, gather: { herbs: 0.3 } }, "#b8c0c8"), uses: 100 },
+  axe: { ...wear("axe", "Сокира", 22, "weapon", { attack: 5, gather: { wood: 0.6 } }, "#a8b0b8"), uses: 150 },
+  pickaxe: { ...wear("pickaxe", "Кайло", 34, "weapon", { attack: 4, gather: { ore: 0.6, stone: 0.6 } }, "#98a0a8"), uses: 150 },
+  sickle: { ...wear("sickle", "Серп", 16, "weapon", { attack: 2, gather: { grain: 0.6, herbs: 0.4 } }, "#c0c8d0"), uses: 120 },
+  shovel: { ...wear("shovel", "Лопата", 14, "weapon", { attack: 3, gather: { sapling: 0.5 } }, "#9a8a6a"), uses: 120 },
   spear: wear("spear", "Спис", 22, "weapon", { attack: 7 }, "#a08a5a"),
   sword: wear("sword", "Меч", 48, "weapon", { attack: 10, presence: 2 }, "#d0d8e0"),
   shield: wear("shield", "Щит", 26, "offhand", { armor: 4 }, "#8a5a32"),

@@ -440,6 +440,8 @@ function buildMap(): GameMap {
   setO(13, 6, O.HEARTH);
   setO(7, 9, O.TABLE); setO(11, 9, O.TABLE); setO(7, 11, O.TABLE); setO(11, 11, O.TABLE);
   setO(13, 9, O.BED); setO(13, 11, O.BED);
+  // guest beds let by the night (койкомісця)
+  setO(6, 9, O.BED); setO(6, 11, O.BED); setO(6, 12, O.BED); setO(13, 12, O.BED);
   lights.push({ x: 13.5, y: 6.8, r: 5, color: "255,150,70" }, { x: 9, y: 9.5, r: 5, color: "255,190,120" });
   for (let y = 14; y < 23; y++) setG(10, y, G.DIRT);
 
@@ -630,13 +632,13 @@ export function isLightObj(o: number): boolean {
 }
 
 /** Is there an object of the given type within `r` tiles of (x,y)? Returns its tile or null. */
-export function findObjNear(map: GameMap, x: number, y: number, objId: number, r = 1.6): { x: number; y: number } | null {
+export function findObjNear(map: GameMap, x: number, y: number, objId: number, r = 1.6, filter?: (x: number, y: number) => boolean): { x: number; y: number } | null {
   const tx = Math.floor(x), ty = Math.floor(y);
   let best: { x: number; y: number } | null = null, bestD = Infinity;
   const R = Math.ceil(r);
   for (let yy = ty - R; yy <= ty + R; yy++)
     for (let xx = tx - R; xx <= tx + R; xx++) {
-      if (!inBounds(xx, yy) || map.obj[idx(xx, yy)] !== objId) continue;
+      if (!inBounds(xx, yy) || map.obj[idx(xx, yy)] !== objId || (filter && !filter(xx, yy))) continue;
       const d = Math.hypot(xx + 0.5 - x, yy + 0.5 - y);
       if (d <= r + 0.5 && d < bestD) { best = { x: xx, y: yy }; bestD = d; }
     }

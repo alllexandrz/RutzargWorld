@@ -17,6 +17,7 @@ import { buyBusiness, buyMeal, canAffordHire, hasVacancy, hire, leaveJob, market
 import { llmEnabled, llmJson } from "../ai/llm.ts";
 import { canWorkAt, SKILL_OF, skillLevel } from "./skillsys.ts";
 import { resistArrest } from "./gear.ts";
+import { seizeForDebts } from "./loans.ts";
 import { familySummary, isChild, isInfant, isWeddingHours, tryWedding, weddingReady } from "./family.ts";
 import { doCraft } from "./crafting.ts";
 import { politicsLine } from "./politics.ts";
@@ -235,7 +236,8 @@ function evaluateOptions(w: World, a: Agent): Option[] {
 
   // Hungry and broke → borrow from the moneylender (and get into debt — a classic story engine)
   const lender = [...w.agents.values()].find((x) => x.profession === "moneylender" && !w.isJailed(x));
-  if (lender && lender.id !== a.id && a.hunger < 40 && a.coins < price && !night && lender.coins > 30 &&
+  const needsTool = (a.flags.toolLoanAt ?? -1e9) > w.time - 600;
+  if (lender && lender.id !== a.id && ((a.hunger < 40 && a.coins < price) || needsTool) && !night && lender.coins > 30 &&
       (a.relations[lender.id]?.debt ?? 0) < 45 && (a.flags.borrowDay ?? 0) !== dayOf(w.time))
     opts.push({ type: "borrow", label: `іде позичити грошей у ${lender.name}`, score: 0.55 + (1 - a.hunger / 100) * 0.4 - a.personality.lawfulness * 0.1, data: { target: lender.id } });
 
@@ -575,7 +577,7 @@ function doArrest(w: World, a: Agent) {
     a.nextThinkAt = w.time + 45;
     return;
   }
-  jail(w, s, a, goalId?.includes(":conspiracy#") ? "змову проти старости" : "крадіжку");
+  jail(w, s, a, goalId?.includes(":conspiracy#") ? "змову проти старости" : goalId?.includes(":debt#") ? "несплату боргу" : "крадіжку");
   if (goalId) removeGoal(a, goalId);
   for (const g of [...a.goals]) if (g.id.startsWith(`arrest:${s.id}:`)) removeGoal(a, g.id);
   setActivity(w, a, "idle", "виконав арешт");
@@ -607,6 +609,7 @@ export function jail(w: World, s: Being, guard: Agent, reason = "крадіжк�
   if (thief) { thief.path = null; setActivity(w, thief, "jail", "у в'язниці"); }
   const p = w.players.get(s.id);
   if (p) {
+    seizeForDebts(w, p);
     p.busy = null;
     w.listener?.teleport(p.id, s.x, s.y);
     w.toast(p.id, `${guard.name} заарештував тебе за ${reason}! 6 годин у в'язниці.`, "bad");
@@ -692,10 +695,14 @@ function doBorrow(w: World, a: Agent) {
     w.say(l.id, `Ти й так мені винен, ${a.name}. Більше не дам.`);
     adjustRel(a, l.id, { trust: -5 });
   } else {
-    const loan = 15;
-    l.coins -= loan; a.coins += loan; r.debt += 20; // 15 now, 20 back
-    w.say(a.id, "Позич п'ятнадцять срібла... віддам, чесне слово.");
-    w.say(l.id, `Двадцять поверни. І не змушуй мене тебе шукати, ${a.name}.`);
+    // for a tool one can't work without — as much as it costs; otherwise enough for food
+    const forTool = (a.flags.toolLoanAt ?? -1e9) > w.time - 600;
+    const loan = forTool ? Math.max(15, Math.min(45, a.flags.toolLoan ?? 15)) : 15;
+    const back = Math.ceil(loan * 4 / 3); // a third on top
+    l.coins -= loan; a.coins += loan; r.debt += back;
+    a.flags.toolLoanAt = -1e9;
+    w.say(a.id, forTool ? `Позич ${loan} срібла на знаряддя... без нього мене з роботи виженуть.` : "Позич п'ятнадцять срібла... віддам, чесне слово.");
+    w.say(l.id, `${back} повернеш. І не змушуй мене тебе шукати, ${a.name}.`);
     w.log(`${a.name} позичає ${loan} срібла в ${l.name} (тепер винен ${r.debt}).`, "economy");
     addGoal(a, `${a.id}_debt`, `Віддати борг ${l.name} (${r.debt})`, 0.7);
   }

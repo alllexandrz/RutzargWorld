@@ -12,6 +12,7 @@ import { isChild, POPULATION_CAP } from "./family.ts";
 import { hasVacancy } from "./economy.ts";
 import { skillLevel, trainSkill } from "./skillsys.ts";
 import { bedPlanned, builderCrafts } from "./crafting.ts";
+import { closedToNewcomers, ensureHomes, playerLodgers } from "./housing.ts";
 
 type ProjectKind = "house" | "mine" | "quarry";
 const MATERIALS: Record<ProjectKind, Partial<Record<ItemId, number>>> = {
@@ -33,10 +34,10 @@ export function residents(w: World, areaId: string): Agent[] {
   return [...w.agents.values()].filter((a) => a.home === areaId && a.kind === "npc");
 }
 
-/** Beds used: a married couple shares a bed, children sleep with their parents. */
+/** Beds used: a married couple shares a bed, children sleep with their parents. Players renting a bed count too. */
 export function bedsUsed(w: World, areaId: string): number {
   const res = residents(w, areaId);
-  let n = 0;
+  let n = playerLodgers(w, areaId).filter((p) => p.lodging?.kind === "bed").length;
   const counted = new Set<string>();
   for (const a of res) {
     if (counted.has(a.id) || isChild(w, a)) continue;
@@ -104,7 +105,7 @@ export function housingNeeds(w: World): Agent[][] {
 }
 
 function findFreeHome(w: World, unitSize: number, avoid: string): string | null {
-  const homes = homeAreas(w).filter((h) => h !== avoid && freeBeds(w, h) >= 1);
+  const homes = homeAreas(w).filter((h) => h !== avoid && freeBeds(w, h) >= 1 && !closedToNewcomers(w, h));
   homes.sort((a, b) => Number(SHARED_HOMES.has(a)) - Number(SHARED_HOMES.has(b)) || freeBeds(w, b) - freeBeds(w, a));
   void unitSize;
   return homes[0] ?? null;
@@ -176,6 +177,7 @@ function completeProject(w: World, p: ConstructionProject) {
   witness(w, f, c.x, c.y);
   for (const id of builders?.workers ?? []) { const b = w.agents.get(id); if (b) { learnFact(w, b, f, "self", 1); w.say(b.id, "Готово! Міцний дім — на століття."); } }
   w.log(`Збудовано новий будинок: ${plot.name}!`, "housing");
+  ensureHomes(w);
   // settle those who need a home most
   for (const unit of housingNeeds(w)) {
     if (freeBeds(w, p.plotId) < 1) break;
