@@ -16,7 +16,7 @@ import { jail, release } from "./brain.ts";
 import { areaContains } from "../../shared/map.ts";
 import { dayOf, hourOf } from "../../shared/time.ts";
 
-const TERM_DAYS = 10;
+const TERM_DAYS = 30;
 const CAMPAIGN_MINUTES = 1440 + 9 * 60; // called at 9:00, votes counted next day at 18:00
 const CANDIDATE_FEE = 25;
 const PETITION_SHARE = 0.4;
