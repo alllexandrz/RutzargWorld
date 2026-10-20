@@ -29,6 +29,7 @@ docker compose exec ollama ollama pull gemma3:4b
 
 - **Без GPU** модель працює, але повільно: відповідь NPC займає 5–20 с, а гра не чекає й тимчасово відповідає шаблоном.
 - **З NVIDIA GPU** на Linux розкоментуй блок `deploy` у сервісі `ollama` (потрібен `nvidia-container-toolkit`).
+- **Перевірити, що AI працює:** у логах старту має бути `LLM check: ✔ ... доступна`; `curl http://<сервер>/api/ai` показує стан і лічильники викликів; `node scripts/ai-check.ts https://<домен>` — бот питає NPC і показує, чи відповів AI.
 - **Ollama вже стоїть на хост-машині?** Тоді профіль `ai` не потрібен: вкажи `LLM_URL=http://host.docker.internal:11434` (Docker Desktop) або IP хоста.
 
 ## Акаунти й вхід через Google
@@ -98,4 +99,4 @@ docker compose exec db pg_dump -U rutzarg rutzarg > backup.sql   # резерв�
 
 ## Локальна розробка без Docker
 
-Як і раніше: `npm start`. Без `DATABASE_URL` сервер зберігає світ у файл `data/world.json`, і база не потрібна.
+Як і раніше: `npm start` (читає змінні з `.env`, якщо файл є). Без `DATABASE_URL` сервер зберігає світ у файл `data/world.json`, і база не потрібна.

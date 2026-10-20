@@ -64,6 +64,7 @@ export class World {
       if (a) a.jobBiz = b.id;
     }
     for (const id of ITEM_IDS) this.market.stock[id] = Math.round(ITEMS[id].targetStock * 0.8);
+    this.market.wholesale = Object.fromEntries(ITEM_IDS.filter((id) => ITEMS[id].dailyExport > 0).map((id) => [id, ITEMS[id].dailyExport * 3]));
     this.syncClock();
     this.log("Світ Rutzarg прокинувся. Каргат, прикордонне містечко Домініону Варон, зустрічає світанок.", "world");
   }
@@ -114,6 +115,14 @@ export class World {
   }
 
   toast(playerId: string, text: string, kind: "info" | "good" | "bad" = "info") {
+    const p = this.players.get(playerId);
+    if (p && !p.online) {
+      // keep it for the next login ("while you were away")
+      p.inbox ??= [];
+      p.inbox.push({ t: this.time, text, kind });
+      if (p.inbox.length > 40) p.inbox.splice(0, p.inbox.length - 40);
+      return;
+    }
     this.listener?.toast(playerId, text, kind);
   }
 

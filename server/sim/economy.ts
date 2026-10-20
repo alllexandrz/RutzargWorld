@@ -2,7 +2,8 @@
 // Same rules for NPC owners and player owners (concept §2.4, §10, §11, §21A.8).
 
 import type { World } from "./world.ts";
-import type { Being, Business } from "./types.ts";
+import type { Being, Business, LedgerDay } from "./types.ts";
+import { dayOf } from "../../shared/time.ts";
 import { ITEMS, ITEM_IDS, type ItemId, invAdd, marketBuyPrice, marketPrice } from "../../shared/items.ts";
 import { areaContains } from "../../shared/map.ts";
 import { addGoal, adjustRel, learnFact, newFact, witness } from "./social.ts";
@@ -324,20 +325,84 @@ function produce(w: World, b: Business, workerId: string) {
     made = got;
   }
   b.stock[b.product] = (b.stock[b.product] ?? 0) + made;
+  ledgerToday(w, b).made += made;
+  // Sawing: each worker-hour turns up to 3 wood from the yard into 6 planks.
+  if (b.process === "plank" && b.product === "wood") {
+    const cut = Math.min(3, Math.floor(b.stock.wood ?? 0));
+    if (cut > 0) { b.stock.wood = (b.stock.wood ?? 0) - cut; b.stock.plank = (b.stock.plank ?? 0) + cut * 2; }
+  }
+}
+
+/** Today's line in the business books. */
+export function ledgerToday(w: World, b: Business): LedgerDay {
+  const day = dayOf(w.time);
+  b.ledger ??= [];
+  let e = b.ledger[b.ledger.length - 1];
+  if (!e || e.day !== day) {
+    e = { day, made: 0, sold: 0, revenue: 0, wages: 0, unpaid: 0 };
+    b.ledger.push(e);
+    if (b.ledger.length > 7) b.ledger.shift();
+  }
+  return e;
+}
+
+/** What the business puts on the market: its product, or the processed good (planks). */
+export function outputItem(b: Business): ItemId | null {
+  return b.process ?? b.product;
+}
+
+/** How many units the market still takes before it is "full". */
+export function marketRoom(w: World, item: ItemId): number {
+  return Math.max(0, ITEMS[item].targetStock * MARKET_FULL - w.marketStock(item));
+}
+
+/** Wholesale merchants pay half the base price, up to a daily volume per item. */
+export function wholesalePrice(item: ItemId): number {
+  return Math.max(1, Math.floor(ITEMS[item].basePrice * 0.5));
+}
+export function wholesaleLeft(w: World, item: ItemId): number {
+  return Math.floor(w.market.wholesale?.[item] ?? 0);
+}
+
+/** Sell from the business warehouse — to the town market (if it has room) or to wholesale caravans. */
+export function sellFromStock(w: World, b: Business, item: ItemId, qty: number, to: "market" | "caravan"): TxResult {
+  const have = Math.floor(b.stock[item] ?? 0);
+  qty = Math.min(Math.floor(qty), have);
+  if (qty <= 0) return { ok: false, reason: "На складі цього немає" };
+  if (to === "market") {
+    qty = Math.min(qty, marketRoom(w, item));
+    if (qty <= 0) return { ok: false, reason: `Ринок переповнений: ${ITEMS[item].name.toLowerCase()} там уже ${w.marketStock(item)}. Спробуй оптовиків-караванників або переробку.` };
+    const got = bizSell(w, b, item, qty);
+    const l = ledgerToday(w, b); l.sold += qty; l.revenue += got;
+    return { ok: true, total: got };
+  }
+  qty = Math.min(qty, wholesaleLeft(w, item));
+  if (qty <= 0) return { ok: false, reason: `Оптовики сьогодні більше не беруть: ${ITEMS[item].name.toLowerCase()}. Нові каравани — завтра.` };
+  const got = qty * wholesalePrice(item);
+  b.stock[item] = have - qty;
+  b.treasury += got; // money from outside Kargat
+  w.market.wholesale![item] = wholesaleLeft(w, item) - qty;
+  const l = ledgerToday(w, b); l.sold += qty; l.revenue += got;
+  return { ok: true, total: got };
 }
 
 function sellOutput(w: World, b: Business) {
-  if (!b.product) return;
-  const have = Math.floor(b.stock[b.product] ?? 0);
+  const item = outputItem(b);
+  if (!item) return;
+  const have = Math.floor(b.stock[item] ?? 0);
   const keep = b.kind === "tavern" ? 14 : 0;
   // the market only takes what it has room for; the rest stays in the warehouse
-  const room = Math.max(0, ITEMS[b.product].targetStock * MARKET_FULL - w.marketStock(b.product));
-  const qty = Math.min(have - keep, room);
+  const qty = Math.min(have - keep, marketRoom(w, item));
   if (qty > 0) {
-    const got = bizSell(w, b, b.product, qty);
+    const got = bizSell(w, b, item, qty);
+    const l = ledgerToday(w, b);
+    l.sold += qty; l.revenue += got;
     if (got > 0 && b.ownerId && w.players.has(b.ownerId))
-      w.toast(b.ownerId, `«${b.name}» продала ${qty} × ${ITEMS[b.product].name} за ${got} срібла.`, "good");
+      w.toast(b.ownerId, `«${b.name}» продала ${qty} × ${ITEMS[item].name} за ${got} срібла.`, "good");
   }
+  const left = Math.floor(b.stock[item] ?? 0) - keep;
+  if (left > 0 && b.ownerId && w.players.has(b.ownerId) && marketRoom(w, item) <= 0)
+    w.toast(b.ownerId, `«${b.name}»: ринок переповнений, на складі лишилось ${left} × ${ITEMS[item].name}. Продай оптовикам або переробляй (B).`, "bad");
 }
 
 function measureIncome(b: Business) {
@@ -368,6 +433,17 @@ function payroll(w: World, b: Business) {
       w.log(`${oa.name} докладає ${give} срібла власних грошей на платню в «${b.name}».`, "economy");
     }
   }
+  // A player owner (online or not) can let the purse cover the payroll, so people don't walk out overnight.
+  const po = b.ownerId ? w.players.get(b.ownerId) : undefined;
+  if (po && b.autoPay !== false && need > 0) {
+    const give = Math.min(need, po.coins);
+    if (give > 0) {
+      po.coins -= give;
+      b.treasury += give;
+      w.toast(po.id, `У касі «${b.name}» забракло на платню — доплачено ${give} срібла з твого гаманця.`, "info");
+      w.selfChanged(po.id);
+    }
+  }
   for (const id of payees) {
     const worker = w.being(id);
     if (!worker) continue;
@@ -375,11 +451,13 @@ function payroll(w: World, b: Business) {
     if (b.treasury >= b.wage) {
       b.treasury -= b.wage;
       worker.coins += b.wage;
+      ledgerToday(w, b).wages += b.wage;
       b.unpaidDays[id] = 0;
       const wa = w.agents.get(id);
       if (wa && owner) adjustRel(wa, owner, { trust: 1.5 });
     } else {
       b.unpaidDays[id] = (b.unpaidDays[id] ?? 0) + 1;
+      ledgerToday(w, b).unpaid++;
       const f = newFact(w, "unpaid", { target: id, biz: b.id, actor: owner ?? undefined });
       const wa = w.agents.get(id);
       if (wa) learnFact(w, wa, f, "self", 1);
@@ -443,6 +521,20 @@ function manageStaff(w: World, b: Business) {
 }
 
 export function onDay(w: World, day: number) {
+  // Wholesale caravans arrive: they buy surplus straight from producers at half price.
+  w.market.wholesale = {};
+  for (const id of ITEM_IDS) if (ITEMS[id].dailyExport > 0) w.market.wholesale[id] = ITEMS[id].dailyExport * 3;
+  // NPC lumber owners saw planks when the town drowns in raw wood (and planks still sell).
+  for (const b of w.businesses.values()) {
+    if (b.kind !== "lumber" || !b.ownerId || w.players.has(b.ownerId)) continue;
+    const woodGlut = w.marketStock("wood") >= ITEMS.wood.targetStock * 3;
+    const planksSell = marketRoom(w, "plank") > ITEMS.plank.targetStock;
+    const want = woodGlut && planksSell ? "plank" : undefined;
+    if (want !== b.process) {
+      b.process = want;
+      w.log(want ? `«${b.name}» починає різати дошки: сирої деревини в місті забагато.` : `«${b.name}» знову продає кругляк.`, "economy");
+    }
+  }
   // Caravans export goods → money flows into town (keeps prices from collapsing)
   for (const id of ITEM_IDS) {
     const def = ITEMS[id];

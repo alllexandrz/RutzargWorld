@@ -5,14 +5,15 @@ import type { World } from "./world.ts";
 import type { Player } from "./types.ts";
 import { INPUT_DT, PLAYER_SPEED, INTERACT_RANGE, START_COINS } from "../../shared/constants.ts";
 import { stepMove, facingFromDir } from "../../shared/move.ts";
-import { G, O, areaContains, canPlant, findObjNear, groundAt, buildingAt, getMap, randomSpotIn } from "../../shared/map.ts";
+import { G, O, areaContains, canPlant, findObjNear, groundAt, buildingAt, getMap, isWalkable, randomSpotIn } from "../../shared/map.ts";
 import { ITEMS, invAdd, type ItemId } from "../../shared/items.ts";
-import { buyBusiness, buyMeal, leaveJob, marketBuy, marketSell, mealPrice } from "./economy.ts";
+import { buyBusiness, buyMeal, leaveJob, marketBuy, marketSell, mealPrice, sellFromStock } from "./economy.ts";
 import { adjustRel, learnFact, newFact, witness } from "./social.ts";
 import { releaseIfDue } from "./brain.ts";
 import type { Look } from "../../shared/protocol.ts";
 import type { SkillId } from "../../shared/skills.ts";
 import { trainSkill } from "./skillsys.ts";
+import { dayOf } from "../../shared/time.ts";
 import { harvestTile, plantSapling, remaining } from "./resources.ts";
 import { STATION_NAMES, craftMinutes, missingInputs, nearStation, recipeById } from "../../shared/crafting.ts";
 import { craftOnce, fmtItems, pickupNear, placeItem } from "./crafting.ts";
@@ -272,7 +273,7 @@ export function playerMarket(w: World, p: Player, op: "buy" | "sell", item: Item
   w.selfChanged(p.id);
 }
 
-export function playerBiz(w: World, p: Player, op: string, bizId?: string, amount?: number, workerId?: string) {
+export function playerBiz(w: World, p: Player, op: string, bizId?: string, amount?: number, workerId?: string, item?: ItemId, to?: "market" | "caravan") {
   const b = bizId ? w.businesses.get(bizId) : undefined;
   if (!b) return;
   const owner = b.ownerId === p.id;
@@ -304,6 +305,36 @@ export function playerBiz(w: World, p: Player, op: string, bizId?: string, amoun
       w.selfChanged(p.id);
       return;
     }
+    case "sellStock": {
+      if (!owner || !item || !ITEMS[item]) return;
+      const r = sellFromStock(w, b, item, Math.max(1, Math.floor(amount ?? 0)), to === "caravan" ? "caravan" : "market");
+      if (!r.ok) return w.toast(p.id, r.reason, "bad");
+      w.toast(p.id, `«${b.name}»: продано ${to === "caravan" ? "оптовикам" : "на ринок"} за ${r.total} срібла (гроші — у касі справи).`, "good");
+      return;
+    }
+    case "takeStock": {
+      if (!owner || !item || !ITEMS[item]) return;
+      const area = w.map.areas[b.area];
+      if (!area || !areaContains({ ...area, x: area.x - 2, y: area.y - 2, w: area.w + 4, h: area.h + 4 }, p.x, p.y))
+        return w.toast(p.id, `Щоб забрати товар, прийди до «${b.name}».`, "bad");
+      const n = Math.min(Math.floor(amount ?? 0), Math.floor(b.stock[item] ?? 0));
+      if (n <= 0) return;
+      b.stock[item] = (b.stock[item] ?? 0) - n;
+      invAdd(p.inv, item, n);
+      w.toast(p.id, `Забрав зі складу: ${ITEMS[item].name} ×${n}.`, "good");
+      w.selfChanged(p.id);
+      return;
+    }
+    case "process":
+      if (!owner || b.kind !== "lumber") return;
+      b.process = (amount ?? 0) > 0 ? "plank" : undefined;
+      w.toast(p.id, b.process ? `«${b.name}»: робітники різатимуть деревину на дошки (по 3 колоди за годину роботи) — продаватимуться дошки.` : `«${b.name}»: продаємо кругляк.`, "info");
+      return;
+    case "autoPay":
+      if (!owner) return;
+      b.autoPay = (amount ?? 1) > 0;
+      w.toast(p.id, b.autoPay ? `«${b.name}»: якщо в касі забракне на платню, доплачу зі свого гаманця.` : `«${b.name}»: платня лише з каси.`, "info");
+      return;
     case "fire": {
       if (!owner || !workerId || !b.workers.includes(workerId)) return;
       const wk = w.being(workerId);
@@ -343,6 +374,33 @@ export function playerPickpocket(w: World, p: Player, npcId: string) {
   w.selfChanged(p.id);
 }
 
+/** "While you were away": books of the player's businesses + notifications kept offline. */
+export function awaySummary(world: World, p: Player): { t: number; text: string; kind: string }[] {
+  const out: { t: number; text: string; kind: string }[] = [];
+  const since = p.offlineSince;
+  if (since !== undefined) {
+    const fromDay = dayOf(since);
+    for (const id of p.ownedBusinesses) {
+      const b = world.businesses.get(id);
+      if (!b) continue;
+      const days = (b.ledger ?? []).filter((d) => d.day >= fromDay);
+      if (!days.length) continue;
+      const sum = days.reduce((a, d) => ({ made: a.made + d.made, sold: a.sold + d.sold, revenue: a.revenue + d.revenue, wages: a.wages + d.wages, unpaid: a.unpaid + d.unpaid }),
+        { made: 0, sold: 0, revenue: 0, wages: 0, unpaid: 0 });
+      const prod = b.product ? ITEMS[b.product].name.toLowerCase() : "товару";
+      out.push({
+        t: world.time, kind: sum.unpaid ? "bad" : "good",
+        text: `«${b.name}» за ${days.length} дн.: вироблено ${Math.floor(sum.made)}, продано ${sum.sold} (${prod}) за ${sum.revenue} срібла, платня ${sum.wages}` +
+          `${sum.unpaid ? `, невиплат: ${sum.unpaid}` : ""}. Каса: ${Math.floor(b.treasury)}, на складі: ${Math.floor(b.product ? b.stock[b.product] ?? 0 : 0)}.`,
+      });
+    }
+  }
+  out.push(...(p.inbox ?? []));
+  p.inbox = [];
+  p.offlineSince = undefined;
+  return out;
+}
+
 export function resetPlayerOnJoin(w: World, p: Player) {
   // Offline policy (prototype): the character leaves the world while offline and
   // re-appears at the same spot; jail time keeps running on the server clock.
@@ -352,4 +410,26 @@ export function resetPlayerOnJoin(w: World, p: Player) {
     p.x = s.x; p.y = s.y;
   }
   p.busy = null;
+}
+
+/**
+ * Every new connection starts a fresh input stream (the client counts `seq` from 0 again):
+ * forget the old counter, or the server would drop all movement until the new seq caught up.
+ * Also step out of anything that appeared on our tile while we were away (a placed bed, a new house...).
+ */
+export function resetConnection(w: World, p: Player) {
+  p.lastInputSeq = 0;
+  p.inputBudget = 0;
+  p.moveDir = { x: 0, y: 0 };
+  if (isWalkable(w.map, Math.floor(p.x), Math.floor(p.y))) return;
+  const tx = Math.floor(p.x), ty = Math.floor(p.y);
+  for (let r = 1; r <= 12; r++)
+    for (let dy = -r; dy <= r; dy++)
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r || !isWalkable(w.map, tx + dx, ty + dy)) continue;
+        p.x = tx + dx + 0.5; p.y = ty + dy + 0.5;
+        return;
+      }
+  const s = randomSpotIn(w.map, w.map.areas.gate);
+  p.x = s.x; p.y = s.y;
 }

@@ -196,6 +196,10 @@ export interface Player extends Being {
   blessing: boolean;
   /** Real-time ms of the last dialogue reward (anti-spam). */
   lastTalkReward: Record<string, number>;
+  /** Notifications that arrived while offline (delivered on the next login). */
+  inbox?: { t: number; text: string; kind: string }[];
+  /** Game minute the player went offline. */
+  offlineSince?: number;
 }
 
 export type BusinessKind = "lumber" | "mine" | "quarry" | "farm" | "smithy" | "tavern" | "guard" | "temple" | "admin" | "trade" | "construction";
@@ -234,7 +238,15 @@ export interface Business {
   income?: number;
   /** Treasury right after the previous payroll — the baseline for measuring income. */
   treasuryMark?: number;
+  /** Day-by-day books (last 7 days): what was made, sold, paid. Shown to owners. */
+  ledger?: LedgerDay[];
+  /** Player owners: cover a payroll shortfall from their own purse (default on). */
+  autoPay?: boolean;
+  /** Lumber camps: saw the felled wood into planks and sell those instead. */
+  process?: "plank";
 }
+
+export interface LedgerDay { day: number; made: number; sold: number; revenue: number; wages: number; unpaid: number }
 
 /** A house under construction (world state; the map is updated via shared applyPlot). */
 export interface ConstructionProject {
@@ -254,6 +266,8 @@ export interface ConstructionProject {
 
 export interface MarketState {
   stock: Partial<Record<ItemId, number>>;
+  /** Wholesale (caravan merchants) still willing to buy today, per item — refilled each morning. */
+  wholesale?: Partial<Record<ItemId, number>>;
 }
 
 export interface ChronicleRecord {

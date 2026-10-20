@@ -18,18 +18,19 @@ class Bot {
   log: S2C[] = [];
   seq = 0;
   name: string;
-  constructor(name: string) { this.name = name; this.ws = new WebSocket(URL); }
+  token = "";
+  constructor(name: string, token = "") { this.name = name; this.token = token; this.ws = new WebSocket(URL); }
   async open() {
     if (this.ws.readyState !== WebSocket.OPEN)
       await new Promise<void>((res, rej) => { this.ws.on("open", () => res()); this.ws.on("error", rej); });
     this.ws.on("message", (raw) => {
       const m = JSON.parse(String(raw)) as S2C;
       this.log.push(m);
-      if (m.t === "welcome") this.id = m.you;
+      if (m.t === "welcome") { this.id = m.you; this.token = m.token || this.token; }
       if (m.t === "self") this.self = m.s;
       if (m.t === "snap") { this.ents = new Map(m.ents.map((e) => [e.id, e])); if (m.me) this.me = m.me; this.ack = m.ack; }
     });
-    this.send({ t: "join", name: this.name });
+    this.send({ t: "join", name: this.name, ...(this.token ? { token: this.token } : {}) });
     await wait(600);
   }
   send(m: C2S) { this.ws.send(JSON.stringify(m)); }
@@ -127,6 +128,23 @@ a.send({ t: "biz", op: "list" });
 await wait(300);
 check("список справ", (a.got("biz").at(-1)?.list.length ?? 0) >= 8);
 
-a.ws.close(); b.ws.close();
+// reconnect: the same character must be able to walk right away (input seq starts from 0 again)
+const oldSeq = a.seq, oldId = a.id;
+a.ws.close();
+await wait(500);
+const a2 = new Bot("Тест-А", a.token);
+await a2.open();
+await wait(400);
+const start2 = { ...a2.me };
+let moved2 = 0;
+for (const [dx, dy] of [[1, 0], [0, 1], [-1, 0], [0, -1]]) {
+  await a2.walk(dx, dy, 15);
+  await wait(300);
+  moved2 = Math.hypot(a2.me.x - start2.x, a2.me.y - start2.y);
+  if (moved2 > 0.5) break;
+}
+check("після перезаходу персонаж ходить", a2.id === oldId && moved2 > 0.5, `той самий: ${a2.id === oldId}, старий seq ${oldSeq}, зрушив на ${moved2.toFixed(2)}`);
+
+a2.ws.close(); b.ws.close();
 console.log(failures ? `\n${failures} перевірок не пройшло` : "\nУсі перевірки пройдено");
 process.exit(failures ? 1 : 0);

@@ -367,6 +367,30 @@ function renderMarket(m: MarketInfo) {
 // Businesses
 // ---------------------------------------------------------------------------
 
+/** Owner: sell or take what's piled up in the warehouse; lumber camps can saw planks. */
+function stockControls(b: BusinessInfo): string {
+  const rows = (b.outlets ?? []).map((o) => `<div class="stock-row">
+      <b>${esc(o.name)}: ${o.qty}</b>
+      <span class="muted">ринок ${o.marketPrice}/шт, візьме ще ${o.marketRoom} · оптовики ${o.wholesalePrice}/шт, візьмуть ще ${o.wholesaleLeft} сьогодні</span>
+      <span class="btns"><input type="number" min="1" value="${o.qty}" id="sq-${b.id}-${o.item}">
+        <button data-sell="${b.id}" data-item="${o.item}" data-to="market" ${o.marketRoom ? "" : "disabled"}>На ринок</button>
+        <button data-sell="${b.id}" data-item="${o.item}" data-to="caravan" ${o.wholesaleLeft ? "" : "disabled"}>Оптовикам</button>
+        <button data-take="${b.id}" data-item="${o.item}" title="Прийди на свою справу">Забрати собі</button></span>
+    </div>`).join("");
+  const proc = b.process === null || b.process === undefined ? "" :
+    `<label class="chk"><input type="checkbox" data-process="${b.id}" ${b.process ? "checked" : ""}> Різати деревину на дошки й продавати дошки (дорожчі, інший ринок)</label>`;
+  return `<div class="stock">${rows || `<div class="muted">Склад порожній.</div>`}${proc}</div>`;
+}
+
+/** Owner's books: the last few days of the business. */
+function ledgerTable(b: BusinessInfo): string {
+  const rows = (b.ledger ?? []).slice().reverse();
+  if (!rows.length) return `<div class="biz-r muted">Журнал: ще немає записів (перший підсумок — о 18:00).</div>`;
+  return `<table class="ledger"><tr><th>День</th><th>Вироблено</th><th>Продано</th><th>Виручка</th><th>Платня</th><th>Невиплати</th></tr>` +
+    rows.map((d) => `<tr><td>${d.day}</td><td>${Math.floor(d.made)}</td><td>${d.sold}</td><td>${d.revenue}</td><td>${d.wages}</td><td class="${d.unpaid ? "bad" : ""}">${d.unpaid || "—"}</td></tr>`).join("") +
+    `</table>`;
+}
+
 function renderBiz(list: BusinessInfo[]) {
   bizList = list;
   const me = state.myId;
@@ -381,7 +405,10 @@ function renderBiz(list: BusinessInfo[]) {
       <div class="biz-r">Платня: <b>${b.wage}</b>/день · Працівники ${b.workers.length}/${b.maxWorkers}: ${workers}</div>
       <div class="biz-r">Години: ${b.workHours[0]}:00–${b.workHours[1]}:00 · Продукт: ${b.product ? ITEMS[b.product].name : "—"} · Склад: ${stock} · Каса: ${b.treasury}</div>
       <div class="biz-r muted">Хто може працювати: ${b.allowedClasses.join(", ")}</div>
+      ${mine ? ledgerTable(b) : ""}
+      ${mine ? stockControls(b) : ""}
       ${mine ? `<div class="biz-own">
+        <label class="chk"><input type="checkbox" data-autopay="${b.id}" ${b.autoPay !== false ? "checked" : ""}> Якщо в касі бракує на платню — доплачувати з мого гаманця (і коли я офлайн)</label>
         <label>Платня <input type="number" min="1" max="50" value="${b.wage}" id="wage-${b.id}"></label><button data-wage="${b.id}">Встановити</button>
         <label>Сума <input type="number" min="1" value="20" id="amt-${b.id}"></label><button data-dep="${b.id}">Покласти в касу</button><button data-wd="${b.id}">Забрати</button>
         <div class="muted">Наймай людей у розмові з ними («Запропонувати роботу»). Безробітні NPC приходять самі, якщо є вакансія. Платня виплачується о 18:00 з каси — якщо грошей не вистачить, люди це запам'ятають.</div>
@@ -400,6 +427,14 @@ function renderBiz(list: BusinessInfo[]) {
   body.querySelectorAll<HTMLButtonElement>("[data-wage]").forEach((b) => b.onclick = () => net.send({ t: "biz", op: "setWage", bizId: b.dataset.wage, amount: Number(($(`wage-${b.dataset.wage}`) as HTMLInputElement).value) }));
   body.querySelectorAll<HTMLButtonElement>("[data-dep]").forEach((b) => b.onclick = () => net.send({ t: "biz", op: "deposit", bizId: b.dataset.dep, amount: Number(($(`amt-${b.dataset.dep}`) as HTMLInputElement).value) }));
   body.querySelectorAll<HTMLButtonElement>("[data-wd]").forEach((b) => b.onclick = () => net.send({ t: "biz", op: "withdraw", bizId: b.dataset.wd, amount: Number(($(`amt-${b.dataset.wd}`) as HTMLInputElement).value) }));
+  body.querySelectorAll<HTMLButtonElement>("[data-sell]").forEach((x) => x.onclick = () => net.send({
+    t: "biz", op: "sellStock", bizId: x.dataset.sell, item: x.dataset.item as ItemId, to: x.dataset.to as "market" | "caravan",
+    amount: Number(($(`sq-${x.dataset.sell}-${x.dataset.item}`) as HTMLInputElement).value) }));
+  body.querySelectorAll<HTMLButtonElement>("[data-take]").forEach((x) => x.onclick = () => net.send({
+    t: "biz", op: "takeStock", bizId: x.dataset.take, item: x.dataset.item as ItemId,
+    amount: Number(($(`sq-${x.dataset.take}-${x.dataset.item}`) as HTMLInputElement).value) }));
+  body.querySelectorAll<HTMLInputElement>("[data-process]").forEach((c) => c.onchange = () => net.send({ t: "biz", op: "process", bizId: c.dataset.process, amount: c.checked ? 1 : 0 }));
+  body.querySelectorAll<HTMLInputElement>("[data-autopay]").forEach((c) => c.onchange = () => net.send({ t: "biz", op: "autoPay", bizId: c.dataset.autopay, amount: c.checked ? 1 : 0 }));
   body.querySelectorAll<HTMLButtonElement>("[data-fire]").forEach((b) => b.onclick = () => net.send({ t: "biz", op: "fire", bizId: b.dataset.biz, workerId: b.dataset.fire }));
 }
 
@@ -475,6 +510,12 @@ export function initUI() {
       case "biz": renderBiz(m.list); break;
       case "inspect": renderInspect(m.info); break;
       case "chronicle": addChronicle(m.entries); break;
+      case "inbox": {
+        chatLine(`<b>Поки тебе не було:</b>`, "away");
+        for (const it of m.items) chatLine(`<span class="muted">${fmtDayTime(it.t)}</span> <span class="${it.kind === "bad" ? "bad" : it.kind === "good" ? "good" : ""}">${esc(it.text)}</span>`, "away");
+        toast(`Поки тебе не було: ${m.items.length} повідомл. — дивись у чаті.`, "info");
+        break;
+      }
       case "error": toast(m.text, "bad"); break;
     }
   });

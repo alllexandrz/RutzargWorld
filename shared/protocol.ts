@@ -69,6 +69,13 @@ export interface BusinessInfo {
   workHours: [number, number];
   areaId: string;
   allowedClasses: string[];
+  /** Owner only: books for the last days and the purse top-up setting. */
+  ledger?: { day: number; made: number; sold: number; revenue: number; wages: number; unpaid: number }[];
+  autoPay?: boolean;
+  /** Owner only: where each warehouse item could be sold right now. */
+  outlets?: { item: ItemId; name: string; qty: number; marketPrice: number; marketRoom: number; wholesalePrice: number; wholesaleLeft: number }[];
+  /** Lumber: currently sawing planks. null = can't process. */
+  process?: string | null;
 }
 
 export interface DialogOption {
@@ -151,7 +158,8 @@ export type C2S =
   | { t: "talk"; npcId: string; opt: string; arg?: string; wage?: number; bizId?: string; price?: number } // opt "keep" = dialog still open (keep-alive)
   | { t: "market"; op: "buy" | "sell"; item: ItemId; qty: number }
   | { t: "openMarket" }
-  | { t: "biz"; op: "list" | "buy" | "setWage" | "deposit" | "withdraw" | "fire" | "commission"; bizId?: string; amount?: number; workerId?: string; plotId?: string }
+  | { t: "biz"; op: "list" | "buy" | "setWage" | "deposit" | "withdraw" | "fire" | "commission" | "autoPay" | "sellStock" | "takeStock" | "process";
+      bizId?: string; amount?: number; workerId?: string; plotId?: string; item?: ItemId; to?: "market" | "caravan" }
   | { t: "inspect"; id: string }
   | { t: "chronicle" }
   | { t: "pickpocket"; npcId: string }
@@ -177,6 +185,8 @@ export type S2C =
   | { t: "inspect"; info: InspectInfo }
   | { t: "chronicle"; entries: ChronicleEntry[] }
   | { t: "toast"; text: string; kind?: "info" | "good" | "bad" }
+  /** What happened while the player was offline (summary lines first). */
+  | { t: "inbox"; items: { t: number; text: string; kind: string }[] }
   | { t: "teleport"; x: number; y: number }
   | { t: "pong"; ts: number }
   | { t: "plots"; plots: PlotInfo[] }

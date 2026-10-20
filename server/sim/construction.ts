@@ -334,7 +334,7 @@ export function onDayHousing(w: World) {
   considerExtraction(w);
   if (w.agents.size >= POPULATION_CAP) return;
   let vacancies = 0;
-  for (const b of w.businesses.values()) if (b.ownerId && !w.players.has(b.ownerId) && b.kind !== "temple" && b.kind !== "admin" && hasVacancy(b)) vacancies += b.maxWorkers - b.workers.length;
+  for (const b of w.businesses.values()) if (b.ownerId && b.kind !== "temple" && b.kind !== "admin" && hasVacancy(b)) vacancies += b.maxWorkers - b.workers.length;
   const unemployed = [...w.agents.values()].filter((a) => a.kind === "npc" && !a.jobBiz && !isChild(w, a) && a.profession !== "moneylender").length;
   if (vacancies - unemployed <= 0) return;
   // Word gets around: with no free beds in town, fewer settlers come.

@@ -199,3 +199,15 @@ a.google .g { font-weight: bold; color: #4285f4; font-size: 18px; }
 #inventory .chip.placeable { cursor: pointer; text-decoration: underline dotted; }
 #build-hint { position: absolute; left: 50%; top: 70px; transform: translateX(-50%); padding: 6px 14px; z-index: 30; }
 @media (max-width: 640px) { .recipe { grid-template-columns: 1fr; } }
+
+/* ---- Business books ---- */
+table.ledger { border-collapse: collapse; margin: 6px 0; font-size: 12px; width: 100%; }
+table.ledger th, table.ledger td { border-bottom: 1px solid var(--border); padding: 2px 6px; text-align: right; }
+table.ledger th:first-child, table.ledger td:first-child { text-align: left; }
+.biz-own label.chk { display: block; margin: 4px 0; }
+#chat-log .line.away { background: rgba(224, 184, 102, 0.07); }
+
+.stock { margin: 6px 0; }
+.stock-row { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 4px 0; border-bottom: 1px dashed var(--border); }
+.stock-row .btns { display: flex; gap: 4px; align-items: center; }
+.stock-row input { width: 64px; }

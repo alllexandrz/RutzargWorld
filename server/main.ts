@@ -18,12 +18,12 @@ import { computeStats } from "./stats.ts";
 import { accountFromSession, authConfig, handleAuth } from "./auth.ts";
 import type { C2S, S2C, EntSnap, SelfState, BusinessInfo, InspectInfo, Look } from "../shared/protocol.ts";
 import { GAME_MINUTES_PER_SECOND, SERVER_TICK_HZ, SNAPSHOT_HZ } from "../shared/constants.ts";
-import { ITEM_IDS, ITEMS, marketBuyPrice, marketPrice } from "../shared/items.ts";
-import { applyInput, createPlayer, playerAct, playerBiz, playerCraft, playerMarket, playerPickpocket, playerPickup, playerPlace, resetPlayerOnJoin } from "./sim/players.ts";
+import { ITEM_IDS, ITEMS, marketBuyPrice, marketPrice, type ItemId } from "../shared/items.ts";
+import { applyInput, awaySummary, createPlayer, playerAct, playerBiz, playerCraft, playerMarket, playerPickpocket, playerPickup, playerPlace, resetConnection, resetPlayerOnJoin } from "./sim/players.ts";
 import { playerTalk } from "./sim/dialogue.ts";
-import { ownerName } from "./sim/economy.ts";
+import { marketRoom, ownerName, wholesaleLeft, wholesalePrice } from "./sim/economy.ts";
 import { CLASS_NAMES, FACTION_NAMES, type Player } from "./sim/types.ts";
-import { llmDescription } from "./ai/llm.ts";
+import { llmDescription, llmProbe, llmStatus } from "./ai/llm.ts";
 import { familySummary, isChild } from "./sim/family.ts";
 import { commissionPlot, plotStates } from "./sim/construction.ts";
 import { MAP_W, areaContains } from "../shared/map.ts";
@@ -118,8 +118,16 @@ function marketInfo() {
   };
 }
 
-function bizList(): BusinessInfo[] {
+function bizList(viewer?: string): BusinessInfo[] {
   return [...world.businesses.values()].map((b) => ({
+    ...(viewer && b.ownerId === viewer ? {
+      ledger: b.ledger ?? [], autoPay: b.autoPay !== false,
+      process: b.kind === "lumber" ? b.process ?? "" : null,
+      outlets: (Object.entries(b.stock) as [ItemId, number][]).filter(([, n]) => n >= 1).map(([item, n]) => ({
+        item, name: ITEMS[item].name, qty: Math.floor(n), marketPrice: marketBuyPrice(item, world.marketStock(item)), marketRoom: marketRoom(world, item),
+        wholesalePrice: wholesalePrice(item), wholesaleLeft: wholesaleLeft(world, item),
+      })),
+    } : {}),
     id: b.id, name: b.name, kind: b.kind, ownerId: b.ownerId, ownerName: ownerName(world, b),
     forSale: b.forSale, wage: b.wage, maxWorkers: b.maxWorkers,
     workers: b.workers.map((id) => ({ id, name: world.nameOf(id), unpaidDays: b.unpaidDays[id] ?? 0 })),
@@ -176,6 +184,7 @@ function sanitizeLook(l: Partial<Look> | undefined): Look {
 /** Enter the world: with an account session (preferred) or as a guest (if allowed). */
 async function joinWorld(s: Session, m: Extract<C2S, { t: "join" }>) {
   let p: Player | undefined;
+  let awayReport: { t: number; text: string; kind: string }[] = [];
   const look = sanitizeLook(m.look);
   const gender = m.look?.gender === "f" ? "f" : "m";
   if (m.session) {
@@ -199,14 +208,17 @@ async function joinWorld(s: Session, m: Extract<C2S, { t: "join" }>) {
     // returning character (a freshly created one is already online and announced)
     p.online = true;
     resetPlayerOnJoin(world, p);
+    awayReport = awaySummary(world, p);
     world.log(`${p.name} повертається до Каргата.`, "player");
   }
+  resetConnection(world, p);
   s.playerId = p.id;
   s.selfDirty = true;
   storage.upsertPlayers([{ id: p.id, name: p.name, online: true }]).catch((e) => console.warn("[db] players:", e.message));
   send(s, { t: "welcome", you: p.id, token: p.accountId ? "" : p.token, time: world.time, minutesPerSecond: GAME_MINUTES_PER_SECOND });
   send(s, { t: "chronicle", entries: world.chronicle.slice(-80) });
   send(s, { t: "plots", plots: plotStates(world) });
+  if (awayReport.length) send(s, { t: "inbox", items: awayReport });
   // all tiles that differ from the generated map (felled trees, planted saplings, mined rocks)
   send(s, { t: "tiles", changes: Object.entries(world.res.overrides).map(([k, [g, o]]) => [Number(k) % MAP_W, Math.floor(Number(k) / MAP_W), g, o] as [number, number, number, number]) });
 }
@@ -238,8 +250,8 @@ function handle(s: Session, m: C2S) {
         const r = commissionPlot(world, p, m.plotId ?? "");
         send(s, { t: "toast", text: r.reason, kind: r.ok ? "good" : "bad" });
         if (r.ok) { s.selfDirty = true; broadcast({ t: "plots", plots: plotStates(world) }); }
-      } else if (m.op !== "list") playerBiz(world, p, m.op, m.bizId, m.amount, m.workerId);
-      send(s, { t: "biz", list: bizList() });
+      } else if (m.op !== "list") playerBiz(world, p, m.op, m.bizId, m.amount, m.workerId, m.item, m.to);
+      send(s, { t: "biz", list: bizList(p.id) });
       break;
     case "inspect": { const info = inspect(m.id); if (info) send(s, { t: "inspect", info }); break; }
     case "chronicle": send(s, { t: "chronicle", entries: world.chronicle.slice(-120) }); break;
@@ -262,6 +274,11 @@ const MIME: Record<string, string> = {
 const http = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://x");
   if (url.pathname === "/health") { res.writeHead(200).end("ok"); return; }
+  if (url.pathname === "/api/ai") {
+    const probe = await llmProbe();
+    res.writeHead(200, { "content-type": "application/json; charset=utf-8" }).end(JSON.stringify({ ...llmStatus(), reachable: probe.ok, detail: probe.detail }, null, 2));
+    return;
+  }
   if (url.pathname.startsWith("/api/auth/") || url.pathname.startsWith("/auth/")) {
     try {
       if (await handleAuth(req, res, url, {
@@ -318,6 +335,7 @@ wss.on("connection", (ws) => {
     if (p && !sessionOf(p.id)) {
       p.online = false;
       p.busy = null;
+      p.offlineSince = world.time;
       world.log(`${p.name} покидає Каргат (офлайн).`, "player");
       storage.upsertPlayers([{ id: p.id, name: p.name, online: false }]).catch((e) => console.warn("[db] players:", e.message));
     }
@@ -412,7 +430,7 @@ async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log("\n[world] saving before shutdown...");
-  for (const p of world.players.values()) p.online = false;
+  for (const p of world.players.values()) { if (p.online) p.offlineSince = world.time; p.online = false; }
   await persistSnapshot();
   await storage.close().catch(() => {});
   process.exit(0);
@@ -427,6 +445,7 @@ http.listen(PORT, "0.0.0.0", () => {
   for (const ifs of Object.values(networkInterfaces()))
     for (const i of ifs ?? []) if (i.family === "IPv4" && !i.internal) console.log(`  LAN:     http://${i.address}:${PORT}`);
   console.log(`  LLM:     ${llmDescription()}`);
+  if (llmDescription() && !llmDescription().startsWith("вимкнено")) llmProbe().then((r) => console.log(`  LLM check: ${r.ok ? "✔" : "✘"} ${r.detail}`));
   console.log(`  Storage: ${storage.kind}`);
   console.log(`  Auth:    акаунти (email/пароль)${authConfig.google ? " + Google" : ""}${authConfig.allowGuests ? " + гості" : ", гості вимкнені"}`);
   console.log(`  Stats:   http://localhost:${PORT}/api/stats\n`);

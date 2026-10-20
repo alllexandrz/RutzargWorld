@@ -67,7 +67,8 @@ export function placeItem(w: World, b: Being, item: ItemId, x: number, y: number
   const can = canPlaceAt(w.map, x, y, def.obj);
   if (!can.ok) return can;
   if (!mayUseBuilding(w, b, buildingArea(w, x, y))) return { ok: false, reason: "Це чужий дім — тут ставити не можна" };
-  for (const o of w.presentBeings()) if (Math.floor(o.x) === x && Math.floor(o.y) === y) return { ok: false, reason: "Тут хтось стоїть" };
+  // offline players count too: they reappear on the same tile when they come back
+  for (const o of [...w.presentBeings(), ...w.players.values()]) if (Math.floor(o.x) === x && Math.floor(o.y) === y) return { ok: false, reason: "Тут хтось стоїть" };
   invAdd(b.inv, item, -1);
   changeTile(w, x, y, null, def.obj);
   w.res.placed[idx(x, y)] = { item, by: owner };

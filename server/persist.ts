@@ -42,7 +42,7 @@ export function snapshot(w: World): SaveFile {
     memorySeq: w.memorySeq,
     factSeq: w.factSeq,
     agents: [...w.agents.values()].map((a) => ({ ...a, path: null, thinking: false })),
-    players: [...w.players.values()].map((p) => ({ ...p, online: false, busy: null })),
+    players: [...w.players.values()].map((p) => ({ ...p, online: false, busy: null, offlineSince: p.online ? w.time : p.offlineSince })),
     businesses: [...w.businesses.values()],
     market: w.market,
     chronicle: w.chronicle,
@@ -106,6 +106,7 @@ export function restore(w: World, data: SaveFile): boolean {
       else if (b.deposit && !cur.deposit) cur.deposit = b.deposit;
     }
     for (const id of ITEM_IDS) if (w.market.stock[id] === undefined) w.market.stock[id] = Math.round(ITEMS[id].targetStock * 0.8);
+    w.market.wholesale ??= Object.fromEntries(ITEM_IDS.filter((id) => ITEMS[id].dailyExport > 0).map((id) => [id, ITEMS[id].dailyExport * 3]));
     for (const a of w.agents.values()) a.skills ??= {};
     for (const p of w.players.values()) p.skills ??= {};
     w.syncClock();

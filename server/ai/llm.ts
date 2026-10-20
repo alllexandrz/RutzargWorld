@@ -23,6 +23,32 @@ export function llmDescription(): string {
   return llmEnabled() ? `${provider} @ ${baseUrl} (${model})` : "вимкнено (utility AI fallback)";
 }
 
+/** Is the model server reachable and does it have the model? (startup check / status endpoint) */
+export async function llmProbe(): Promise<{ ok: boolean; detail: string }> {
+  if (!llmEnabled()) return { ok: false, detail: "вимкнено (RUTZARG_LLM не задано)" };
+  try {
+    const url = provider === "ollama" ? `${baseUrl}/api/tags` : `${baseUrl}/v1/models`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return { ok: false, detail: `${baseUrl} відповідає HTTP ${res.status}` };
+    const data = (await res.json()) as { models?: { name: string }[]; data?: { id: string }[] };
+    const names = provider === "ollama" ? (data.models ?? []).map((m) => m.name) : (data.data ?? []).map((m) => m.id);
+    if (provider === "ollama" && !names.some((n) => n === model || n === `${model}:latest`))
+      return { ok: false, detail: `модель ${model} не завантажена (є: ${names.join(", ") || "нічого"}) — ollama pull ${model}` };
+    return { ok: true, detail: `${provider} @ ${baseUrl} (${model}) — доступна` };
+  } catch (e) {
+    return { ok: false, detail: `${baseUrl} недоступний (${(e as Error).message})` };
+  }
+}
+
+/** Status for /api/ai. */
+export function llmStatus() {
+  return {
+    enabled: llmEnabled(), provider, model, url: llmEnabled() ? baseUrl : null,
+    calls: llmStats.calls, failures: llmStats.failures, dropped: llmStats.dropped, queued: queue.length,
+    avgMs: llmStats.calls ? Math.round(llmStats.totalMs / llmStats.calls) : null,
+  };
+}
+
 export type Priority = 0 | 1 | 2; // 0 = high (talking with a player), 1 = medium, 2 = low
 
 interface Job {
