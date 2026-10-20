@@ -5,7 +5,10 @@
 import { World } from "../server/sim/world.ts";
 import { createPlayer, playerAct, playerBiz } from "../server/sim/players.ts";
 import { bedsUsed, residents } from "../server/sim/construction.ts";
-import { bedPrice, hasWorkshop, leaveLodging, livesFree, lodgingOffers, nightlyRent, rentLodging, workshopAt } from "../server/sim/housing.ts";
+import { adjustRents, bedPrice, closedToNewcomers, hasWorkshop, leaveLodging, livesFree, lodgingOffers, markNoBed, nightlyRent, onHourLodging, rentLodging, setLetting, workshopAt } from "../server/sim/housing.ts";
+import { tickNeeds } from "../server/sim/needs.ts";
+import { buildHour, commissionPlot, onDayHousing } from "../server/sim/construction.ts";
+import { placeItem } from "../server/sim/crafting.ts";
 import { craftOnce } from "../server/sim/crafting.ts";
 import { recipeById } from "../shared/crafting.ts";
 import { O, randomSpotIn } from "../shared/map.ts";
@@ -115,6 +118,91 @@ const put = (w: World, b: { x: number; y: number }, area: string) => { const s =
   const outside = workshopAt(w, p, 20, 50);
   check("надворі — безкоштовно", outside === null);
   void O;
+}
+
+// 6) A full tavern: benches; NPCs without a bed sleep worse
+{
+  const w = new World();
+  const p = createPlayer(w, "p6", "Пізній", "tok", look, "m");
+  p.coins = 100;
+  // the tavern fills up with newcomers
+  const movers = [...w.agents.values()].filter((a) => a.kind === "npc" && a.home !== "tavern" && !a.spouse && a.bornAt === undefined && a.profession !== "reeve").slice(0, 7);
+  for (const a of movers) a.home = "tavern";
+  markNoBed(w);
+  const offers = lodgingOffers(w, p, used(w));
+  check("ліжок у таверні немає — є лава", !offers.some((o) => o.area === "tavern" && o.kind === "bed") && offers.some((o) => o.kind === "bench"), offers.filter((o) => o.area === "tavern").map((o) => `${o.kind}:${o.price}`).join(","));
+  const noBed = [...w.agents.values()].filter((a) => a.flags.noBed);
+  check("зайві в таверні сплять без ліжка", noBed.length > 0, noBed.map((a) => a.name).join(", "));
+  const a = noBed[0];
+  a.anim = "sleep"; a.energy = 10;
+  const b = movers.find((m) => !m.flags.noBed)!;
+  b.anim = "sleep"; b.energy = 10;
+  tickNeeds(w, 60);
+  check("на лаві сон гірший", a.energy < b.energy, `${a.energy.toFixed(1)} < ${b.energy.toFixed(1)}`);
+  put(w, p, "tavern");
+  const r = rentLodging(w, p, "tavern", "bench", used(w));
+  check("гравець платить за місце на лаві", r.ok && p.lodging?.kind === "bench", r.reason);
+  playerAct(w, p, "rest");
+  check("сон на лаві гірший за ліжко", (p.busy?.rate ?? 1) < 1 && (p.busy?.rate ?? 0) > 0.4);
+  // demand: prices go up when full, down when empty
+  const t0 = bedPrice(w, "tavern");
+  adjustRents(w);
+  check("місць немає — ліжко дорожчає", bedPrice(w, "tavern") === t0 + 1, `${t0} → ${bedPrice(w, "tavern")}`);
+  for (const m of movers) m.home = "house_1";
+  leaveLodging(w, p);
+  markNoBed(w);
+  adjustRents(w); adjustRents(w);
+  check("місць багато — дешевшає", bedPrice(w, "tavern") < t0 + 1, `${bedPrice(w, "tavern")}`);
+}
+
+// 7) Camping and one's own house
+{
+  const w = new World();
+  const p = createPlayer(w, "p7", "Будівник", "tok", look, "f");
+  p.coins = 2000;
+  // a camp outside the walls: own bed
+  p.x = 60.5; p.y = 30.5;
+  p.inv.bed = 1;
+  let spot: { x: number; y: number } | null = null;
+  for (let y = 28; y < 34 && !spot; y++) for (let x = 58; x < 64 && !spot; x++) if (placeItem(w, p, "bed", x, y).ok) spot = { x, y };
+  check("ліжко поставлено за мурами", !!spot);
+  if (spot) { p.x = spot.x + 0.5; p.y = spot.y + 1.5; }
+  playerAct(w, p, "rest");
+  check("табір: сон кращий за землю, гірший за дім", p.busy?.camp === true && (p.busy.rate ?? 0) > 0.4 && (p.busy.rate ?? 1) < 1, `${p.busy?.rate}`);
+  // a camp in the street → the guard wakes you
+  const g = w.agents.get("daren")!;
+  put(w, p, "market");
+  p.busy = { kind: "rest", label: "Ночує в таборі", start: Date.now(), dur: 1e9, rate: 0.7, camp: true };
+  g.x = p.x + 1; g.y = p.y; g.anim = "idle";
+  onHourLodging(w, 2);
+  check("у місті на вулиці варта будить", !p.busy);
+  // commission a house at the residence → it's yours
+  const plot = w.map.plots.find((x) => x.kind === "house" && w.map.plotStage[x.id] === "empty")!;
+  const r = commissionPlot(w, p, plot.id);
+  check("будинок замовлено", r.ok, r.reason);
+  const proj = w.projects.find((x) => x.plotId === plot.id)!;
+  for (const [it, n] of Object.entries(proj.required)) proj.delivered[it as "wood"] = n as number;
+  proj.progress = 0.998;
+  w.projects = [proj, ...w.projects.filter((x) => x !== proj)];
+  buildHour(w, "toren");
+  check("дім збудовано — власник гравець", w.homes[plot.id]?.owner === p.id && p.lodging?.kind === "own" && p.lodging.area === plot.id, JSON.stringify(w.homes[plot.id]));
+  check("свій дім не здається, поки не дозволиш", closedToNewcomers(w, plot.id));
+  const lr = setLetting(w, p, plot.id, true, 5);
+  check("здаю ліжка по 5", lr.ok && !closedToNewcomers(w, plot.id) && bedPrice(w, plot.id) === 5);
+  const lodger = w.agents.get("kaya")!;
+  lodger.home = plot.id; lodger.coins = 50;
+  const c0 = p.coins;
+  nightlyRent(w);
+  check("мешканка платить власнику-гравцю", p.coins === c0 + 5, `${c0} → ${p.coins}`);
+}
+
+// 8) A well-off lodger NPC commissions a house of their own
+{
+  const w = new World();
+  const kaya = w.agents.get("kaya")!;
+  kaya.coins = 5000; kaya.personality.ambition = 0.9;
+  onDayHousing(w);
+  check("заможна NPC замовляє власний дім", w.projects.some((x) => x.commissionedBy === kaya.id), w.projects.map((x) => x.commissionedBy).join(","));
 }
 
 console.log(failures ? `\n${failures} перевірок не пройдено` : "\nУсі перевірки пройдено");

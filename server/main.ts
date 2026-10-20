@@ -26,11 +26,11 @@ import { atResidence, guards, isPrivatisable, petitionNeeded, tally, TAX_STEPS }
 import { CLASS_NAMES, FACTION_NAMES, type Player } from "./sim/types.ts";
 import { llmDescription, llmProbe, llmStatus } from "./ai/llm.ts";
 import { familySummary, isChild } from "./sim/family.ts";
-import { bedsUsed, commissionPlot, plotStates } from "./sim/construction.ts";
-import { MAP_W, areaContains, findObjNear } from "../shared/map.ts";
+import { bedsUsed, commissionPlot, estimateCost, plotStates, residents } from "./sim/construction.ts";
+import { MAP_W, areaContains, bedsIn, findObjNear } from "../shared/map.ts";
 import { discard, equipItem, repairItem, repairQuote, statsOf, unequip } from "./sim/gear.ts";
 import { charInfo } from "./sim/charsheet.ts";
-import { atLodging, bedPrice, livesFree, defaultCraftFee, hasWorkshop, landlordName, leaveLodging, lodgingOffers, rentLodging, workshopAt } from "./sim/housing.ts";
+import { atLodging, bedPrice, livesFree, lodgingPrice, playerLodgers, setLetting, defaultCraftFee, hasWorkshop, landlordName, leaveLodging, lodgingOffers, rentLodging, workshopAt } from "./sim/housing.ts";
 import { STATION_OBJ, STATION_RANGE } from "../shared/crafting.ts";
 import { SLOTS, SLOT_NAMES, condLabel } from "../shared/gear.ts";
 import type { Being } from "./sim/types.ts";
@@ -131,7 +131,7 @@ function selfState(p: Player): SelfState {
     stats: (({ attack, armor, presence, power }) => ({ attack, armor, presence, power }))(statsOf(p)),
     home: p.lodging ? {
       area: p.lodging.area, name: world.map.areas[p.lodging.area]?.name ?? p.lodging.area, kind: p.lodging.kind, debt: p.lodging.debt,
-      price: p.lodging.kind === "house" ? world.homes[p.lodging.area]?.houseRent ?? 0 : bedPrice(world, p.lodging.area),
+      price: lodgingPrice(world, p.lodging),
     } : null,
     workshops: nearWorkshops(p),
     debts: (p.loans ?? []).map((l) => ({ lender: world.nameOf(l.lender), lenderId: l.lender, owe: l.owe, due: l.due, overdueDays: l.overdueDays })),
@@ -154,10 +154,16 @@ function lodgingInfo(p: Player): LodgingInfo {
   return {
     current: l ? {
       area: l.area, name: world.map.areas[l.area]?.name ?? l.area, kind: l.kind, debt: l.debt, since: l.since,
-      price: l.kind === "house" ? world.homes[l.area]?.houseRent ?? 0 : bedPrice(world, l.area),
-      landlord: landlordName(world, l.area), here: atLodging(world, p),
+      price: lodgingPrice(world, l),
+      landlord: l.kind === "own" ? "ти" : landlordName(world, l.area), here: atLodging(world, p),
     } : null,
     offers: lodgingOffers(world, p, (a) => bedsUsed(world, a)),
+    owned: Object.entries(world.homes).filter(([, h]) => h.owner === p.id).map(([area, h]) => ({
+      area, name: world.map.areas[area]?.name ?? area, letting: h.rentable, price: h.bedRent, beds: bedsIn(world.map, area),
+      lodgers: [...residents(world, area).map((a) => a.name), ...playerLodgers(world, area).filter((x) => x.id !== p.id).map((x) => x.name)],
+    })),
+    houseCost: estimateCost(world, "house"),
+    atResidence: areaContains(world.map.areas.residence, p.x, p.y),
   };
 }
 
@@ -241,7 +247,7 @@ function inspect(id: string): InspectInfo | null {
       location: world.areaName(a.x, a.y),
       family: familySummary(world, a),
       skills: roundSkills(a.skills),
-      home: `${world.map.areas[a.home]?.name ?? a.home}${livesFree(world, a, a.home) ? "" : ` — ліжко за ${bedPrice(world, a.home)}/ніч (${landlordName(world, a.home)})`}${a.flags.rentDebt ? `, борг ${a.flags.rentDebt}` : ""}`,
+      home: `${world.map.areas[a.home]?.name ?? a.home}${livesFree(world, a, a.home) ? "" : ` — ліжко за ${bedPrice(world, a.home)}/ніч (${landlordName(world, a.home)})`}${a.flags.rentDebt ? `, борг ${a.flags.rentDebt}` : ""}${a.flags.noBed ? " · ліжка не дісталося — спить на лаві" : ""}`,
       gear: gearLines(a),
     };
   }
@@ -370,7 +376,11 @@ function handle(s: Session, m: C2S) {
     case "charinfo": send(s, { t: "char", info: charInfo(world, p) }); break;
     case "lodging": {
       if (m.op === "rent") {
-        const r = rentLodging(world, p, String(m.area ?? ""), m.kind === "house" ? "house" : "bed", (a) => bedsUsed(world, a));
+        const kind = m.kind === "house" || m.kind === "bench" ? m.kind : "bed";
+        const r = rentLodging(world, p, String(m.area ?? ""), kind, (a) => bedsUsed(world, a));
+        send(s, { t: "toast", text: r.reason, kind: r.ok ? "good" : "bad" });
+      } else if (m.op === "letting") {
+        const r = setLetting(world, p, String(m.area ?? ""), !!m.on, Number(m.amount ?? 0));
         send(s, { t: "toast", text: r.reason, kind: r.ok ? "good" : "bad" });
       } else if (m.op === "leave") {
         const r = leaveLodging(world, p);

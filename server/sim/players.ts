@@ -21,7 +21,7 @@ import { STATION_NAMES, craftMinutes, missingInputs, nearStation, recipeById } f
 import { craftOnce, fmtItems, pickupNear, placeItem } from "./crafting.ts";
 import { skillLevel } from "./skillsys.ts";
 import { starterOutfit, toolBonus, toolFor, toolNames, useTool } from "./gear.ts";
-import { atLodging, bedPrice } from "./housing.ts";
+import { atLodging, bedPrice, sleepQuality } from "./housing.ts";
 
 const lastMoveAt = new Map<string, number>();
 
@@ -256,13 +256,28 @@ export function playerAct(w: World, p: Player, a: "gather" | "eat" | "rest" | "p
     case "rest": {
       // proper sleep only at home (a rented bed / house) or next to one's own bed; elsewhere you doze where you can
       const ownBed = findObjNear(w.map, p.x, p.y, O.BED, 1.6, (x, y) => w.res.placed[idx(x, y)]?.by === p.id);
-      if (w.isJailed(p) || atLodging(w, p) || ownBed) { startBusy(w, p, "rest", "Відпочиває", 1e9, undefined, undefined, { rate: 1 }); return; }
+      if (w.isJailed(p)) { startBusy(w, p, "rest", "Відпочиває", 1e9, undefined, undefined, { rate: 1 }); return; }
+      if (atLodging(w, p)) {
+        const q = sleepQuality(p.lodging);
+        startBusy(w, p, "rest", q < 1 ? "Спить на лаві" : "Відпочиває", 1e9, undefined, undefined, { rate: q });
+        return;
+      }
+      if (ownBed) {
+        // one's own bed under a roof — a proper sleep; outdoors — a camp: better than the bare ground, worse than a house
+        const roof = buildingAt(w.map, ownBed.x + 0.5, ownBed.y + 0.5);
+        if (!roof) {
+          const inTown = areaContains(w.map.areas.town, p.x, p.y);
+          w.toast(p.id, inTown ? "Ночуєш у таборі просто на вулиці — варта цього не любить." : "Ночуєш у таборі під відкритим небом.", "info");
+        }
+        startBusy(w, p, "rest", roof ? "Відпочиває" : "Ночує в таборі", 1e9, undefined, undefined, { rate: roof ? 1 : 0.7, camp: !roof });
+        return;
+      }
       if (areaContains(w.map.areas.tavern, p.x, p.y) && !atLodging(w, p))
         w.toast(p.id, `Ліжка в таверні — для тих, хто заплатив (${bedPrice(w, "tavern")} срібла за ніч, вікно «Персонаж» → «Житло»). Поки дрімаєш на лаві.`, "info");
       else w.toast(p.id, buildingAt(w.map, p.x, p.y)
         ? "Ти тут не мешкаєш — дрімаєш абияк, сон неглибокий. Орендуй житло: «Персонаж» (I) → «Житло»."
         : "Ночуєш просто неба — сон тривожний і неглибокий. Орендуй житло: «Персонаж» (I) → «Житло».", "info");
-      startBusy(w, p, "rest", p.lodging ? "Дрімає (не вдома)" : "Дрімає де доведеться", 1e9, undefined, undefined, { rate: 0.4 });
+      startBusy(w, p, "rest", p.lodging ? "Дрімає (не вдома)" : "Дрімає де доведеться", 1e9, undefined, undefined, { rate: 0.4, camp: !buildingAt(w.map, p.x, p.y) });
       return;
     }
     case "pray": {

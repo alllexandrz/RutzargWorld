@@ -54,7 +54,7 @@ export interface SelfState {
   equip: Equipment;
   stats: { attack: number; armor: number; presence: number; power: number };
   /** Where the player lives (null = nowhere: dozing wherever). */
-  home: { area: string; name: string; kind: "bed" | "house"; price: number; debt: number } | null;
+  home: { area: string; name: string; kind: LodgingKind; price: number; debt: number } | null;
   /** Money owed to townsfolk. */
   debts: { lender: string; lenderId: string; owe: number; due: number; overdueDays: number }[];
   /** Repairs possible right here (next to an anvil / workbench), per worn slot. */
@@ -63,11 +63,18 @@ export interface SelfState {
   workshops: { station: string; label: string; owner: string; fee: number; free: boolean }[];
 }
 
-export interface LodgingOfferInfo { area: string; name: string; kind: "bed" | "house"; price: number; landlord: string; free: number; here: boolean }
+/** bed — a rented bed; bench — a place on a bench in a full tavern; house — a whole rented house; own — one's own house. */
+export type LodgingKind = "bed" | "bench" | "house" | "own";
+
+export interface LodgingOfferInfo { area: string; name: string; kind: LodgingKind; price: number; landlord: string; free: number; here: boolean }
 
 export interface LodgingInfo {
-  current: { area: string; name: string; kind: "bed" | "house"; price: number; landlord: string; debt: number; since: number; here: boolean } | null;
+  current: { area: string; name: string; kind: LodgingKind; price: number; landlord: string; debt: number; since: number; here: boolean } | null;
   offers: LodgingOfferInfo[];
+  /** Houses the player owns (commissioned at the residence). */
+  owned: { area: string; name: string; letting: boolean; price: number; beds: number; lodgers: string[] }[];
+  houseCost: number;
+  atResidence: boolean;
 }
 
 /** Character sheet (panel I) — the heavier part, sent on request. */
@@ -191,6 +198,8 @@ export interface PlotInfo {
   /** Waiting in the builders' queue. */
   queued: boolean;
   by: string | null;
+  /** Built house with a private owner. */
+  owner?: string | null;
 }
 
 export interface PoliticsInfo {
@@ -249,7 +258,7 @@ export type C2S =
   /** Throw away: the thing in a slot, or one copy of an item from the bag. */
   | { t: "discard"; slot?: Slot; item?: ItemId }
   /** Lodging: see offers, rent a bed / a whole house where you stand, move out. */
-  | { t: "lodging"; op: "info" | "rent" | "leave"; area?: string; kind?: "bed" | "house" }
+  | { t: "lodging"; op: "info" | "rent" | "leave" | "letting"; area?: string; kind?: LodgingKind; amount?: number; on?: boolean }
   /** Request the character sheet (S2C "char"). */
   | { t: "charinfo" }
   /** Town politics (panel G). Paperwork needs presence at the residence. */

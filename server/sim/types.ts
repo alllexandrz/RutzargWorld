@@ -202,7 +202,7 @@ export interface Player extends Being {
   lastInputSeq: number;
   moveDir: { x: number; y: number };
   inputBudget: number;
-  busy: { kind: "gather" | "eat" | "rest" | "pray" | "craft"; label: string; start: number; dur: number; item?: ItemId; tile?: { x: number; y: number }; recipe?: string; left?: number; rate?: number } | null;
+  busy: { kind: "gather" | "eat" | "rest" | "pray" | "craft"; label: string; start: number; dur: number; item?: ItemId; tile?: { x: number; y: number }; recipe?: string; left?: number; rate?: number; camp?: boolean } | null;
   ownedBusinesses: string[];
   blessing: boolean;
   /** Real-time ms of the last dialogue reward (anti-spam). */
@@ -216,7 +216,7 @@ export interface Player extends Being {
   /** Money borrowed from townsfolk (server/sim/loans.ts). */
   loans?: { lender: string; principal: number; owe: number; due: number; since: number; overdueDays: number; reported?: boolean }[];
   /** Where the player lives: a rented bed or a whole house. */
-  lodging?: { area: string; kind: "bed" | "house"; since: number; debt: number; paidNight: number } | null;
+  lodging?: { area: string; kind: "bed" | "bench" | "house" | "own"; since: number; debt: number; paidNight: number } | null;
 }
 
 export type BusinessKind = "lumber" | "mine" | "quarry" | "farm" | "smithy" | "tavern" | "guard" | "temple" | "admin" | "trade" | "construction";
@@ -265,6 +265,7 @@ export interface Business {
   craftFee?: number;
   /** The tavern: price of a bed per night. */
   bedRent?: number;
+  baseRent?: number;
 }
 
 export interface LedgerDay { day: number; made: number; sold: number; revenue: number; wages: number; unpaid: number; tax?: number; rent?: number; fees?: number }
@@ -285,6 +286,8 @@ export interface Home {
   rentable: boolean;
   /** Fee for using a station here (null = owner's default). */
   craftFee?: number;
+  /** The bed price the landlord started from — demand moves the price around it (0.5×..2.5×). */
+  baseRent?: number;
 }
 
 /** Who rules Kargat and how firmly (a small-scale prototype of faction politics, concept §3.5–3.6). */

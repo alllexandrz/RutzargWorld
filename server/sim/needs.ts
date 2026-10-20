@@ -11,7 +11,8 @@ export function tickNeeds(w: World, gdt: number) {
   for (const b of w.presentBeings()) {
     if (b.kind === "klumnog") continue;
     b.hunger = Math.max(0, b.hunger - HUNGER_DECAY * gdt);
-    if (b.anim === "sleep") b.energy = Math.min(100, b.energy + ENERGY_SLEEP_REGEN * gdt);
+    // no bed in an overfull home: a bench or the floor — a poor night
+    if (b.anim === "sleep") b.energy = Math.min(100, b.energy + ENERGY_SLEEP_REGEN * gdt * ((b as { flags?: Record<string, number> }).flags?.noBed ? 0.55 : 1));
     else {
       // Klumnogi blessing: "the ancient light does not let you tire as fast as others"
       const blessed = (b as { blessing?: boolean }).blessing ? 0.5 : 1;

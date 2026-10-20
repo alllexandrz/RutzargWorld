@@ -382,7 +382,7 @@ function statsTab(s: SelfState): string {
       <div class="kv"><span>Справи</span><span>${esc(c.businesses.join(", ") || "—")}</span></div>
       <div class="kv"><span>У Каргаті</span><span>${c.daysInWorld !== null ? `${c.daysInWorld} дн.` : "—"}</span></div>
       <div class="kv"><span>Зараз</span><span>${esc(c.location)}</span></div>
-      <div class="kv"><span>Житло</span><span>${s.home ? `${esc(s.home.name)} (${s.home.kind === "house" ? "будинок" : "ліжко"}, ${s.home.price}/ніч)` : `<span class="bad">ніде</span>`}</span></div>
+      <div class="kv"><span>Житло</span><span>${s.home ? `${esc(s.home.name)} (${s.home.kind === "own" ? "власний дім" : `${s.home.kind === "house" ? "будинок" : s.home.kind === "bench" ? "лава" : "ліжко"}, ${s.home.price}/ніч`})` : `<span class="bad">ніде</span>`}</span></div>
       ${c.lastJailed !== null ? `<div class="kv"><span>Востаннє у в'язниці</span><span>${fmtDayTime(c.lastJailed)}</span></div>` : ""}
       ${c.roles.map((r) => `<div>• ${esc(r)}</div>`).join("")}` : `<div class="muted">Завантаження…</div>`}
       <h4>Стан</h4>
@@ -415,30 +415,58 @@ function statsTab(s: SelfState): string {
 
 let lodging: LodgingInfo | null = null;
 
+const KIND_NAMES: Record<string, string> = { bed: "койкомісце (ліжко)", bench: "місце на лаві в таверні — сон гірший", house: "увесь будинок", own: "власний дім" };
+
+/** Own houses (letting beds) and free plots to commission one. */
+function ownHomes(s: SelfState): string {
+  const l = lodging;
+  if (!l) return "";
+  const owned = l.owned.map((h) => `<div class="lodge-cur">
+      <div class="kv"><span>Твій дім</span><b>${esc(h.name)}</b></div>
+      <div class="kv"><span>Ліжок</span><span>${h.beds}${h.lodgers.length ? ` · мешканці: ${h.lodgers.map(esc).join(", ")}` : ""}</span></div>
+      <label class="chk"><input type="checkbox" id="let-${h.area}" ${h.letting ? "checked" : ""}> Здавати вільні ліжка</label>
+      <label>ціна за ніч <input type="number" min="1" max="30" value="${h.price}" id="letp-${h.area}" style="width:56px"></label>
+      <button class="mini" data-letting="${h.area}">Зберегти</button>
+      <div class="muted">Мешканці (NPC і гравці) платитимуть тобі щовечора. У своєму домі ти спиш, майструєш і ставиш меблі безкоштовно.</div>
+    </div>`).join("");
+  const allPlots = state.plots.filter((p) => p.kind === "house" && p.stage !== "built");
+  // building sites first, then a few free plots
+  const plots = [...allPlots.filter((p) => p.stage !== "empty" || p.queued), ...allPlots.filter((p) => p.stage === "empty" && !p.queued).slice(0, 4)];
+  const more = allPlots.length - plots.length;
+  const mine = state.plots.filter((p) => p.kind === "house" && p.stage !== "empty" && p.by === s.name);
+  const rows = plots.map((p) => `<div class="deposit"><b>${esc(p.name)}</b>
+      ${p.stage === "site" ? ` · будується ${p.progress ?? 0}% (${esc(p.by ?? "")})` : p.queued ? ` · у черзі (${esc(p.by ?? "")})` :
+        ` · <button class="mini" data-commission-house="${p.id}" ${l.atResidence && s.coins >= l.houseCost ? "" : "disabled"}>Замовити за ${p.cost ?? l.houseCost}</button>`}</div>`).join("");
+  return `<h4>Свій дім</h4>${owned}
+    ${mine.length && !l.owned.length ? `<div class="muted">Твій будинок будується: ${mine.map((p) => `${esc(p.name)} ${p.progress ?? 0}%`).join(", ")}.</div>` : ""}
+    ${rows ? `${rows}${more > 0 ? `<div class="muted">…і ще ${more} вільних ділянок</div>` : ""}<p class="muted">Будинок замовляють у резиденції старости: платиш артілі (матеріали + праця), вона закупить усе й збудує, а дім стане твоїм.${l.atResidence ? "" : " Зараз ти не в резиденції."}</p>` : `<div class="muted">Вільних ділянок під будинок немає.</div>`}`;
+}
+
 function homeTab(s: SelfState): string {
   const l = lodging;
   const cur = l?.current;
   const curHtml = cur
     ? `<div class="lodge-cur">
         <div class="kv"><span>Де мешкаєш</span><b>${esc(cur.name)}</b></div>
-        <div class="kv"><span>Що винаймаєш</span><span>${cur.kind === "house" ? "увесь будинок" : "койкомісце (ліжко)"}</span></div>
-        <div class="kv"><span>Плата</span><span>${cur.price} срібла за ніч · щовечора о 21:00</span></div>
+        <div class="kv"><span>${cur.kind === "own" ? "Що це" : "Що винаймаєш"}</span><span>${KIND_NAMES[cur.kind]}</span></div>
+        ${cur.kind === "own" ? "" : `<div class="kv"><span>Плата</span><span>${cur.price} срібла за ніч · щовечора о 21:00</span></div>`}
         <div class="kv"><span>Господар</span><span>${esc(cur.landlord)}</span></div>
         <div class="kv"><span>Мешкаєш з</span><span>${fmtDayTime(cur.since)}</span></div>
         ${cur.debt ? `<div class="kv bad"><span>Борг за житло</span><b>${cur.debt} срібла</b></div><div class="bad">Не заплатиш кілька ночей — виселять.</div>` : ""}
-        <div class="kv"><span>Зараз</span><span>${cur.here ? `<span class="good">ти вдома — R: повноцінний сон</span>` : "не вдома"}</span></div>
-        <button data-leave="1">З'їхати</button>
+        <div class="kv"><span>Зараз</span><span>${cur.here ? `<span class="good">ти вдома — R: ${cur.kind === "bench" ? "сон на лаві (гірший)" : "повноцінний сон"}</span>` : "не вдома"}</span></div>
+        <button data-leave="1">${cur.kind === "own" ? "Не ночувати тут" : "З'їхати"}</button>
       </div>`
     : `<div class="lodge-cur bad">Ти ніде не мешкаєш. Спиш де доведеться — сон неглибокий (сил набираєшся у 2,5 раза повільніше).</div>`;
   const offers = l?.offers ?? [];
   const rows = offers.map((o) => `<tr>
-      <td>${esc(o.name)}</td><td>${o.kind === "house" ? "увесь будинок" : `ліжко <span class="muted">(вільних ${o.free})</span>`}</td>
+      <td>${esc(o.name)}</td><td>${o.kind === "house" ? "увесь будинок" : `${o.kind === "bench" ? "місце на лаві" : "ліжко"} <span class="muted">(вільних ${o.free})</span>`}</td>
       <td><b>${o.price}</b> срібла/ніч</td><td>${esc(o.landlord)}</td>
       <td>${o.here ? `<button class="mini" data-rent="${o.area}" data-kind="${o.kind}" ${s.coins < o.price ? "disabled title='Перша ніч наперед'" : ""}>Винайняти</button>` : `<span class="muted">прийди туди</span>`}</td>
     </tr>`).join("");
   return `${curHtml}
     <h4>Можна винайняти</h4>
     ${offers.length ? `<table class="tbl"><tr><th>Де</th><th>Що</th><th>Ціна</th><th>Господар</th><th></th></tr>${rows}</table>` : `<div class="muted">${l ? "Зараз вільного житла немає." : "Завантаження…"}</div>`}
+    ${ownHomes(s)}
     <p class="muted">Домовляються на місці: прийди в таверну чи до будинку й натисни «Винайняти» — перша ніч наперед, далі плата щовечора о 21:00. Цілий будинок — твій: можна ставити там меблі й працювати на своєму верстаку.
       NPC теж платять за ліжка своїм господарям; хто не платить, того виселяють у таверну.</p>`;
 }
@@ -446,6 +474,9 @@ function homeTab(s: SelfState): string {
 function renderChar() {
   const s = state.self;
   if (!s || $("panel-char").hidden) return;
+  // don't wipe what the player is typing (price fields...)
+  const f = document.activeElement;
+  if (f && $("char-body").contains(f) && (f.tagName === "INPUT" || f.tagName === "SELECT")) return;
   $("char-title").textContent = `${s.name}${s.blessing ? " ✦" : ""}`;
   for (const b of $("panel-char").querySelectorAll<HTMLButtonElement>(".char-tabs button")) b.classList.toggle("sel", b.dataset.tab === charTab);
   $("char-body").innerHTML = charTab === "gear" ? gearTab(s) : charTab === "bag" ? bagTab(s) : charTab === "home" ? homeTab(s) : statsTab(s);
@@ -1022,6 +1053,13 @@ export function initUI() {
     const rent = t.closest("[data-rent]") as HTMLElement | null;
     if (rent) return net.send({ t: "lodging", op: "rent", area: rent.dataset.rent, kind: rent.dataset.kind as "bed" | "house" });
     if (t.closest("[data-leave]")) net.send({ t: "lodging", op: "leave" });
+    const lt = t.closest("[data-letting]") as HTMLElement | null;
+    if (lt) {
+      const a = lt.dataset.letting!;
+      return net.send({ t: "lodging", op: "letting", area: a, on: ($(`let-${a}`) as HTMLInputElement).checked, amount: Number(($(`letp-${a}`) as HTMLInputElement).value) });
+    }
+    const ch = t.closest("[data-commission-house]") as HTMLElement | null;
+    if (ch) { net.send({ t: "biz", op: "commission", plotId: ch.dataset.commissionHouse }); setTimeout(() => net.send({ t: "lodging", op: "info" }), 400); }
   });
 
   chatLine(`<span class="muted">Ласкаво просимо до Каргата. Натисни <b>H</b> — довідка. <b>Enter</b> — чат з іншими гравцями.</span>`);

@@ -75,6 +75,7 @@ function mayUseBuilding(w: World, b: Being, areaId: string | null): boolean {
   const ag = w.agents.get(b.id);
   if (ag && ag.home === areaId) return true;
   if (w.players.get(b.id)?.lodging?.area === areaId && w.homes[areaId]?.tenant === b.id) return true;
+  if (w.homes[areaId]?.owner === b.id) return true;
   for (const biz of w.businesses.values()) if (biz.area === areaId && biz.ownerId === b.id) return true;
   return false;
 }

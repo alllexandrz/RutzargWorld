@@ -12,7 +12,7 @@ import { isChild, POPULATION_CAP } from "./family.ts";
 import { hasVacancy } from "./economy.ts";
 import { skillLevel, trainSkill } from "./skillsys.ts";
 import { bedPlanned, builderCrafts } from "./crafting.ts";
-import { closedToNewcomers, ensureHomes, playerLodgers } from "./housing.ts";
+import { closedToNewcomers, ensureHomes, livesFree, playerLodgers, settleOwner } from "./housing.ts";
 
 type ProjectKind = "house" | "mine" | "quarry";
 const MATERIALS: Record<ProjectKind, Partial<Record<ItemId, number>>> = {
@@ -153,7 +153,7 @@ export function startProject(w: World, plotId: string, by: string) {
 /** A player pays the builders' guild to build a mine/quarry on a deposit; the result will be theirs. */
 export function commissionPlot(w: World, buyer: Being, plotId: string): { ok: boolean; reason: string } {
   const plot = w.map.plots.find((x) => x.id === plotId);
-  if (!plot || plot.kind === "house") return { ok: false, reason: "Тут можна будувати лише шахту чи кар'єр." };
+  if (!plot) return { ok: false, reason: "Немає такої ділянки." };
   if (w.map.plotStage[plotId] !== "empty" || w.projects.some((x) => x.plotId === plotId)) return { ok: false, reason: "Ця ділянка вже зайнята." };
   const cost = estimateCost(w, plot.kind);
   if (buyer.coins < cost) return { ok: false, reason: `Потрібно ${cost} срібла (матеріали + праця будівельників).` };
@@ -161,7 +161,7 @@ export function commissionPlot(w: World, buyer: Being, plotId: string): { ok: bo
   const guild = w.businesses.get("builders");
   if (guild) guild.treasury += cost;
   startProject(w, plotId, buyer.id);
-  return { ok: true, reason: `Замовлено за ${cost} срібла. Будівельна артіль закупить матеріали й збудує.` };
+  return { ok: true, reason: `Замовлено за ${cost} срібла. Будівельна артіль закупить матеріали й збудує${plot.kind === "house" ? " — і дім буде твій" : ""}.` };
 }
 
 function completeProject(w: World, p: ConstructionProject) {
@@ -172,6 +172,14 @@ function completeProject(w: World, p: ConstructionProject) {
   if (builders) builders.area = activeProject(w)?.plotId ?? "warehouse";
   const plot = w.map.plots.find((x) => x.id === p.plotId)!;
   if (plot.kind !== "house") return openExtraction(w, p, plot.id);
+  // a privately commissioned house belongs to whoever paid for it
+  if (p.commissionedBy !== "town") {
+    settleOwner(w, p.plotId, p.commissionedBy);
+    const f = newFact(w, "house_built", { place: plot.name, actor: p.commissionedBy });
+    witness(w, f, plot.x + 2.5, plot.y + 2.5);
+    w.log(`Збудовано новий будинок: ${plot.name} (власник — ${w.nameOf(p.commissionedBy)}).`, "housing");
+    return;
+  }
   const f = newFact(w, "house_built", { place: plot.name, actor: builders?.workers[0] });
   const c = { x: plot.x + 2.5, y: plot.y + 2.5 };
   witness(w, f, c.x, c.y);
@@ -308,7 +316,7 @@ export function onHourHousing(w: World, hour: number) {
   }
   // 2) still not enough beds → commission a house on the next free plot
   const waiting = housingNeeds(w).filter((u) => !bedPlanned(w, u[0].home)).length;
-  if (waiting > 0 && !w.projects.some((x) => (x.kind ?? "house") === "house")) {
+  if (waiting > 0 && !w.projects.some((x) => (x.kind ?? "house") === "house" && x.commissionedBy === "town")) {
     const plot = w.map.plots.find((p) => p.kind === "house" && w.map.plotStage[p.id] === "empty" && !w.projects.some((x) => x.plotId === p.id));
     if (plot && w.townTreasury >= estimateCost(w) * 0.6) startProject(w, plot.id, "town");
   }
@@ -332,8 +340,22 @@ function considerExtraction(w: World) {
   }
 }
 
+/** A well-off NPC who pays rent orders a house of their own (the same deal a player gets at the residence). */
+function npcOwnHouse(w: World) {
+  if (w.projects.some((x) => x.commissionedBy !== "town")) return; // one private build at a time
+  const plot = w.map.plots.find((p) => p.kind === "house" && w.map.plotStage[p.id] === "empty" && !w.projects.some((x) => x.plotId === p.id));
+  if (!plot) return;
+  const cost = estimateCost(w, "house");
+  const buyer = [...w.agents.values()]
+    .filter((a) => a.kind === "npc" && !isChild(w, a) && !livesFree(w, a, a.home) && a.coins > cost + 40 && a.personality.ambition + a.personality.greed > 0.8)
+    .sort((x, y) => y.coins - x.coins)[0];
+  if (!buyer) return;
+  commissionPlot(w, buyer, plot.id);
+}
+
 export function onDayHousing(w: World) {
   considerExtraction(w);
+  npcOwnHouse(w);
   if (w.agents.size >= POPULATION_CAP) return;
   let vacancies = 0;
   for (const b of w.businesses.values()) if (b.ownerId && b.kind !== "temple" && b.kind !== "admin" && hasVacancy(b)) vacancies += b.maxWorkers - b.workers.length;
@@ -354,7 +376,8 @@ export function plotStates(w: World) {
       materials: pr ? (Object.entries(pr.required) as [ItemId, number][]).map(([i, n]) => `${ITEMS[i].name} ${pr.delivered[i] ?? 0}/${n}`).join(", ") : null,
       kind: p.kind, name: p.name, resource: p.resource ?? null,
       remaining: p.amount !== undefined ? Math.round(w.res.deposits[p.id] ?? 0) : null,
-      cost: p.kind !== "house" && w.map.plotStage[p.id] === "empty" && !pr ? estimateCost(w, p.kind) : null,
+      cost: w.map.plotStage[p.id] === "empty" && !pr ? estimateCost(w, p.kind) : null,
+      owner: w.homes[p.id]?.owner && w.homes[p.id].owner !== "town" ? w.nameOf(w.homes[p.id].owner!) : null,
       queued: !!pr && w.projects[0] !== pr,
       by: pr ? w.nameOf(pr.commissionedBy) : null,
     };
