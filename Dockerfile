@@ -1,4 +1,4 @@
-# ---- build: bundle the Phaser client ----
+# ---- build: bundle the Phaser client and the item editor ----
 FROM node:24.4-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -7,7 +7,8 @@ COPY tsconfig.json ./
 COPY shared ./shared
 COPY client ./client
 COPY scripts ./scripts
-RUN node scripts/build-client.ts
+COPY tools ./tools
+RUN node scripts/build-client.ts && node tools/item-editor/build.ts
 
 # ---- runtime: Node runs the TypeScript server directly (type stripping) ----
 FROM node:24.4-alpine
@@ -20,6 +21,8 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY shared ./shared
 COPY server ./server
 COPY --from=build /app/client/dist ./client/dist
+# the item editor (/editor/, admins only — ADMIN_EMAILS)
+COPY --from=build /app/tools/item-editor/dist ./tools/item-editor/dist
 RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 EXPOSE 8787

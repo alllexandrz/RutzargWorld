@@ -30,6 +30,8 @@ const register = (email: string) => fetch(`${base}/api/auth/register`, { method:
 
 try {
   // closed by default
+  const bare = await fetch(`${base}/editor`, { redirect: "manual" });
+  check("/editor без слешу → /editor/", bare.status === 301 && bare.headers.get("location") === "/editor/");
   const page = await fetch(`${base}/editor/`, { redirect: "manual" });
   check("редактор без входу → сторінка входу", page.status === 302 && page.headers.get("location") === "/editor/login.html");
   check("сторінка входу відкрита", (await fetch(`${base}/editor/login.html`)).status === 200);

@@ -453,9 +453,11 @@ const http = createServer(async (req, res) => {
     await handleGameData(req, res);
     return;
   }
-  if (url.pathname === "/editor" || url.pathname.startsWith("/editor/")) {
+  // "/editor" → "/editor/": the page loads its files by relative paths
+  if (url.pathname === "/editor") { res.writeHead(301, { location: "/editor/" }).end(); return; }
+  if (url.pathname.startsWith("/editor/")) {
     let p = normalize(decodeURIComponent(url.pathname.slice("/editor".length))).replace(/^([/\\])+/, "");
-    if (!p || p.endsWith("/")) p += "index.html";
+    if (!p || p === "." || p.endsWith("/")) p = p === "." ? "index.html" : p + "index.html";
     // the login page is public; the editor itself only for admins
     if (!EDITOR_PUBLIC.has(p)) {
       const acc = await editorAccess(req, storage);

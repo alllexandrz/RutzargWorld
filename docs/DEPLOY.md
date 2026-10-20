@@ -63,7 +63,7 @@ docker compose exec ollama ollama pull gemma3:4b
    ```
    ADMIN_EMAILS=you@example.com,colleague@example.com
    ```
-3. `docker compose up -d`. Тепер `/editor/` просить увійти; входять лише акаунти зі списку.
+3. `docker compose up -d --build` (образ збирає й редактор). Тепер `/editor/` просить увійти; входять лише акаунти зі списку.
 
 Без `ADMIN_EMAILS` редактор ззовні закритий повністю. Для скриптів можна задати `ADMIN_TOKEN` (заголовок `x-admin-token`). Подробиці — [tools/item-editor/README.md](../tools/item-editor/README.md).
 

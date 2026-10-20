@@ -1,5 +1,6 @@
 node_modules
 client/dist
+tools/item-editor/dist
 data
 .git
 .env
