@@ -100,6 +100,7 @@ const put = (w: World, b: { x: number; y: number }, area: string) => { const s =
   const ulf = w.agents.get("ulf")!;
   check("для Ульфа — безкоштовно", !!workshopAt(w, ulf, 8, 18)?.free);
   p.inv.iron = 1;
+  p.inv.hammer = 1; // forging needs a hammer
   const smithy = w.businesses.get("smithy")!;
   const s0 = smithy.treasury, c0 = p.coins;
   const r = craftOnce(w, p, recipeById("knife")!);

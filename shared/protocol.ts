@@ -3,6 +3,7 @@
 
 import type { Inventory, ItemId, Slot } from "./items.ts";
 import type { Equipment } from "./gear.ts";
+import type { GameData } from "./gamedata.ts";
 
 export type EntityKind = "player" | "npc" | "klumnog";
 
@@ -282,6 +283,8 @@ export type S2C =
   | { t: "politics"; info: PoliticsInfo }
   | { t: "char"; info: CharInfo }
   | { t: "lodging"; info: LodgingInfo }
+  /** Items / recipes / tool rules the server runs with (sent on join and after an editor import). */
+  | { t: "gamedata"; data: GameData }
   /** What happened while the player was offline (summary lines first). */
   | { t: "inbox"; items: { t: number; text: string; kind: string }[] }
   | { t: "teleport"; x: number; y: number }

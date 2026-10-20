@@ -10,7 +10,9 @@ export type ItemId =
   | "lamp" | "workbench" | "forge" | "anvil" | "hearth" | "well"
   // things worn or held (shared/gear.ts)
   | "cap" | "helmet" | "shirt" | "svyta" | "chainmail" | "trousers" | "lychaky" | "boots"
-  | "club" | "knife" | "axe" | "pickaxe" | "sickle" | "shovel" | "spear" | "sword" | "shield";
+  | "club" | "knife" | "axe" | "pickaxe" | "sickle" | "shovel" | "spear" | "sword" | "shield"
+  // craftsmen's tools (needed to make things; worn by every batch)
+  | "hammer" | "saw" | "needle";
 
 export type ItemGroup = "raw" | "material" | "placeable" | "wear";
 
@@ -101,6 +103,9 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   spear: wear("spear", "Спис", 22, "weapon", { attack: 7 }, "#a08a5a"),
   sword: wear("sword", "Меч", 48, "weapon", { attack: 10, presence: 2 }, "#d0d8e0"),
   shield: wear("shield", "Щит", 26, "offhand", { armor: 4 }, "#8a5a32"),
+  hammer: { ...wear("hammer", "Ковальський молот", 18, "weapon", { attack: 4 }, "#7a7f88"), uses: 200 },
+  saw: { ...wear("saw", "Пилка", 16, "weapon", { attack: 1 }, "#b0a080"), uses: 200 },
+  needle: { ...wear("needle", "Голка й ножиці", 8, "weapon", {}, "#c8c8d0"), uses: 150 },
 };
 
 /** The placeable item that a map object comes from (for dismantling). */

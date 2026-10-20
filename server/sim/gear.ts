@@ -6,7 +6,7 @@ import type { World } from "./world.ts";
 import type { Agent, Being } from "./types.ts";
 import { ITEMS, invAdd, type ItemId, type Slot } from "../../shared/items.ts";
 import { JOB_TOOL, SLOTS, TOOL_FOR, WEAR, gearStats, repairCost, repairStation, wearPerUse, type CharStats, type Equipment } from "../../shared/gear.ts";
-import { STATION_NAMES, STATION_OBJ, STATION_RANGE } from "../../shared/crafting.ts";
+import { RECIPE_BY_OUT, STATION_NAMES, STATION_OBJ, STATION_RANGE } from "../../shared/crafting.ts";
 import { findObjNear } from "../../shared/map.ts";
 import { marketBuy } from "./economy.ts";
 import { workshopAt } from "./housing.ts";
@@ -77,6 +77,37 @@ export function toolBonus(b: Being, resource: ItemId): number {
   if (!held) return 0;
   const g = ITEMS[held.item].stats?.gather?.[resource] ?? 0;
   return held.dur < 25 ? g * 0.6 : g;
+}
+
+/** Has the thing: in the bag or worn / held. */
+export function hasItem(b: Being, item: ItemId): boolean {
+  return (b.inv[item] ?? 0) > 0 || Object.values(b.equip ?? {}).some((x) => x?.item === item);
+}
+
+/**
+ * A craftsman's tool used for one batch: the copy in hand if held, otherwise one in the bag
+ * (the most worn copy is used up first). A copy at 0 breaks.
+ */
+export function wearCraftTool(w: World, b: Being, item: ItemId) {
+  const amount = wearPerUse(item);
+  for (const slot of SLOTS) if (b.equip?.[slot]?.item === item) { wearOut(w, b, slot, amount); return; }
+  const have = b.inv[item] ?? 0;
+  if (have <= 0) return;
+  b.worn ??= {};
+  const list = wornCopies(b, item);
+  if (list.length < have) list.push(100); // start using a new copy
+  b.worn[item] = list;
+  let i = 0;
+  for (let k = 1; k < list.length; k++) if (list[k] < list[i]) i = k;
+  list[i] -= amount;
+  if (list[i] <= 0) {
+    list.splice(i, 1);
+    invAdd(b.inv, item, -1);
+    if (!list.length) delete b.worn[item];
+    w.toast(b.id, `${ITEMS[item].name}: зношено вщент, довелося викинути.`, "bad");
+    if (b.kind !== "player") w.log(`${b.name}: ${ITEMS[item].name.toLowerCase()} — зношено вщент.`, "craft");
+  }
+  w.selfChanged(b.id);
 }
 
 /** Using the tool wears it: `units` gathered / made with it. */
@@ -316,6 +347,9 @@ function npcDress(w: World) {
     }
     if (!pick) continue;
     if ((a.flags[`craftFail_${pick.item}`] ?? -1e9) > w.time - 1440) continue;
+    // can't make it yet and nobody sells it — don't even start
+    const rec = RECIPE_BY_OUT[pick.item];
+    if (w.marketStock(pick.item) <= 0 && rec && (rec.minSkill ?? 0) > skillLevel(a, rec.skill)) continue;
     const cost = Math.min(materialCost(w, pick.item, 1, { ...a.inv }), w.marketStock(pick.item) > 0 ? Math.round(ITEMS[pick.item].basePrice * 1.6) : Infinity);
     const reserve = pick.urgent ? 4 : 25;
     if (cost > a.coins - reserve) {
@@ -348,6 +382,14 @@ export function onDayGear(w: World) {
 /** Make sure everybody has an outfit (new worlds, old saves, newcomers). */
 export function ensureOutfits(w: World) {
   for (const a of w.agents.values()) if (a.kind === "npc") a.equip ??= starterOutfit(a, isChild(w, a) ? "child" : a.profession);
+  // once: craftsmen own the tools of their craft (in the bag)
+  const CRAFT_TOOLS: Record<string, ItemId[]> = { blacksmith: ["hammer"], innkeeper: [], builder: ["saw"] };
+  for (const a of w.agents.values()) {
+    if (a.kind !== "npc" || a.flags.craftToolsGiven) continue;
+    a.flags.craftToolsGiven = 1;
+    const kit = [...(CRAFT_TOOLS[a.profession] ?? []), ...(a.jobBiz === "builders" ? ["saw" as ItemId] : []), ...(a.jobBiz === "smithy" ? ["hammer" as ItemId] : [])];
+    for (const t of new Set(kit)) if (!hasItem(a, t)) invAdd(a.inv, t, 1);
+  }
   // once: workers of the town's first businesses own the tool of their trade
   for (const a of w.agents.values()) {
     if (a.kind !== "npc" || a.flags.jobToolGiven) continue;

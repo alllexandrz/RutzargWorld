@@ -256,3 +256,4 @@ button.danger { border-color: #8a3a2a; color: #e07a6a; }
 .craft-group .fee { color: var(--gold); }
 .slot-btns { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
 button.danger, .mini.danger { border-color: #7a3a30; color: #e09080; }
+.recipe .in.req span { border-style: dashed; }

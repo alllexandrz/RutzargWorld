@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Rutzarg — вхід у редактор</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="login-page">
+  <form id="login" class="login-card" autocomplete="on">
+    <div class="brand">RUTZARG <span>Редактор речей</span></div>
+    <p class="muted">Доступ лише для адміністраторів гри.</p>
+    <label>Email <input id="email" type="email" autocomplete="username" required maxlength="200"></label>
+    <label>Пароль <input id="password" type="password" autocomplete="current-password" required maxlength="200"></label>
+    <button id="go" class="accent" type="submit">Увійти</button>
+    <a id="google" class="google-btn" href="/auth/google?for=editor" hidden><b>G</b> Увійти через Google</a>
+    <div id="err" class="bad"></div>
+    <p class="muted small">Той самий акаунт, що й у грі. Адміністраторів задає <code>ADMIN_EMAILS</code> у <code>.env</code> сервера.</p>
+  </form>
+  <script type="module" src="login.js"></script>
+</body>
+</html>

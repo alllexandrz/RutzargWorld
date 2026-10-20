@@ -5,6 +5,8 @@
 //   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET — enable Google sign-in
 //   PUBLIC_URL     — public base URL (for the OAuth redirect), e.g. https://rutzarg.example.com
 //   ALLOW_GUESTS   — "0" disables guest play (default: allowed)
+//   ADMIN_EMAILS   — comma-separated emails of accounts allowed into the item editor (/editor/).
+//                    Empty: the editor works only from the same machine (no reverse proxy), without login.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from "node:crypto";
@@ -20,7 +22,51 @@ export const authConfig = {
   publicUrl: (process.env.PUBLIC_URL ?? "").replace(/\/$/, ""),
   allowGuests: process.env.ALLOW_GUESTS !== "0",
   get google() { return !!(this.googleClientId && this.googleClientSecret); },
+  adminEmails: new Set((process.env.ADMIN_EMAILS ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)),
 };
+
+// ---------------------------------------------------------------------------
+// Admins (item editor)
+// ---------------------------------------------------------------------------
+
+export const EDITOR_COOKIE = "rz_editor";
+/** The editor cookie lives shorter than a game session. */
+const EDITOR_COOKIE_HOURS = 12;
+
+export function isAdmin(a: Account | null): boolean {
+  return !!a?.email && authConfig.adminEmails.has(a.email.toLowerCase());
+}
+
+/** Request straight from this machine (not through a reverse proxy). */
+export function isLocalRequest(req: IncomingMessage): boolean {
+  const a = req.socket.remoteAddress ?? "";
+  return !req.headers["x-forwarded-for"] && !req.headers["x-real-ip"] && (a === "127.0.0.1" || a === "::1" || a === "::ffff:127.0.0.1");
+}
+
+export type EditorAccess = { ok: true; who: string } | { ok: false; reason: string };
+
+/**
+ * May this request use the item editor?
+ *  - ADMIN_EMAILS set: a signed-in admin (editor cookie) — from anywhere;
+ *  - ADMIN_EMAILS empty: only from the same machine (development), no login.
+ */
+export async function editorAccess(req: IncomingMessage, storage: Storage): Promise<EditorAccess> {
+  if (!authConfig.adminEmails.size) {
+    return isLocalRequest(req) ? { ok: true, who: "localhost" }
+      : { ok: false, reason: "Редактор вимкнено для доступу ззовні: задай ADMIN_EMAILS у .env" };
+  }
+  const a = await accountFromSession(storage, cookie(req, EDITOR_COOKIE));
+  if (!a) return { ok: false, reason: "Увійди як адміністратор" };
+  if (!isAdmin(a)) return { ok: false, reason: "Цей акаунт не має доступу до редактора" };
+  return { ok: true, who: a.email ?? a.id };
+}
+
+function editorCookie(req: IncomingMessage, token: string | null): string {
+  const secure = baseUrl(req).startsWith("https") ? "; Secure" : "";
+  return token
+    ? `${EDITOR_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${EDITOR_COOKIE_HOURS * 3600}${secure}`
+    : `${EDITOR_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secure}`;
+}
 
 // ---------------------------------------------------------------------------
 // Crypto helpers
@@ -184,6 +230,42 @@ export async function handleAuth(req: IncomingMessage, res: ServerResponse, url:
     return true;
   }
 
+  // ---- item editor: admins only (cookie session) ----
+  if (p === "/api/editor/me" && req.method === "GET") {
+    const acc = await editorAccess(req, storage);
+    json(res, acc.ok ? 200 : 401, acc.ok ? { who: acc.who, login: authConfig.adminEmails.size > 0 } : { error: acc.reason, google: authConfig.google, login: authConfig.adminEmails.size > 0 });
+    return true;
+  }
+
+  if (p === "/api/editor/login" && req.method === "POST") {
+    if (limited(req, 5)) { json(res, 429, { error: "Забагато спроб. Зачекай хвилину." }); return true; }
+    if (!authConfig.adminEmails.size) { json(res, 400, { error: "Адміністраторів не задано (ADMIN_EMAILS у .env)" }); return true; }
+    let body: Record<string, unknown>;
+    try { body = await readJson(req); } catch { json(res, 400, { error: "Некоректний запит" }); return true; }
+    const email = String(body.email ?? "").trim().toLowerCase();
+    const acc = await storage.findAccountByEmail(email);
+    const ok = acc?.passwordHash ? await verifyPassword(String(body.password ?? ""), acc.passwordHash) : false;
+    // one answer for "no such account", "wrong password" and "not an admin" — don't reveal who the admins are
+    if (!acc || !ok || !isAdmin(acc)) {
+      console.warn(`[editor] failed login for ${email || "?"}`);
+      json(res, 401, { error: "Невірний email або пароль, або немає доступу до редактора" });
+      return true;
+    }
+    acc.lastLoginAt = Date.now();
+    await storage.saveAccount(acc);
+    const session = await createSession(storage, acc.id);
+    console.log(`[editor] ${email} signed in`);
+    json(res, 200, { ok: true, who: email }, { "set-cookie": editorCookie(req, session) });
+    return true;
+  }
+
+  if (p === "/api/editor/logout" && req.method === "POST") {
+    const t = cookie(req, EDITOR_COOKIE);
+    if (t) await storage.deleteSession(sha256(t));
+    json(res, 200, { ok: true }, { "set-cookie": editorCookie(req, null) });
+    return true;
+  }
+
   if (p === "/api/auth/logout" && req.method === "POST") {
     const t = bearer(req);
     if (t) await storage.deleteSession(sha256(t));
@@ -194,7 +276,9 @@ export async function handleAuth(req: IncomingMessage, res: ServerResponse, url:
   // ---- Google OAuth 2.0 ----
   if (p === "/auth/google" && req.method === "GET") {
     if (!authConfig.google) { json(res, 404, { error: "Вхід через Google не налаштовано" }); return true; }
-    const state = randomBytes(16).toString("hex");
+    // ?for=editor — sign in to the item editor (the state cookie remembers where to return)
+    const forEditor = url.searchParams.get("for") === "editor";
+    const state = randomBytes(16).toString("hex") + (forEditor ? ".editor" : "");
     const params = new URLSearchParams({
       client_id: authConfig.googleClientId,
       redirect_uri: `${baseUrl(req)}/auth/google/callback`,
@@ -213,9 +297,13 @@ export async function handleAuth(req: IncomingMessage, res: ServerResponse, url:
   }
 
   if (p === "/auth/google/callback" && req.method === "GET") {
-    const fail = (msg: string) => { res.writeHead(302, { location: `/#auth_error=${encodeURIComponent(msg)}` }); res.end(); };
-    if (!authConfig.google) return fail("Вхід через Google не налаштовано"), true;
     const state = url.searchParams.get("state");
+    const forEditor = !!state?.endsWith(".editor");
+    const fail = (msg: string) => {
+      res.writeHead(302, { location: forEditor ? `/editor/login.html#error=${encodeURIComponent(msg)}` : `/#auth_error=${encodeURIComponent(msg)}` });
+      res.end();
+    };
+    if (!authConfig.google) return fail("Вхід через Google не налаштовано"), true;
     if (!state || state !== cookie(req, "rz_oauth_state")) return fail("Помилка безпеки входу (state). Спробуй ще раз."), true;
     const code = url.searchParams.get("code");
     if (!code) return fail(url.searchParams.get("error") ?? "Вхід скасовано"), true;
@@ -251,6 +339,20 @@ export async function handleAuth(req: IncomingMessage, res: ServerResponse, url:
           id: randomUUID(), email, displayName: (claims.name ?? email?.split("@")[0] ?? "Мандрівник").slice(0, 40),
           passwordHash: null, googleSub: claims.sub, playerId: null, createdAt: Date.now(), lastLoginAt: null,
         };
+      }
+      if (forEditor) {
+        // never create accounts through the editor door; only existing admins get in
+        if (!isAdmin(acc) || !(await storage.findAccountByGoogle(claims.sub) ?? (email ? await storage.findAccountByEmail(email) : null))) {
+          console.warn(`[editor] google sign-in refused for ${email ?? claims.sub}`);
+          return fail("Цей акаунт не має доступу до редактора"), true;
+        }
+        acc.lastLoginAt = Date.now();
+        await storage.saveAccount(acc);
+        const session = await createSession(storage, acc.id);
+        console.log(`[editor] ${acc.email} signed in (Google)`);
+        res.writeHead(302, { location: "/editor/", "set-cookie": [editorCookie(req, session), "rz_oauth_state=; Path=/auth; Max-Age=0"] });
+        res.end();
+        return true;
       }
       acc.lastLoginAt = Date.now();
       await storage.saveAccount(acc);

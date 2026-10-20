@@ -1,5 +1,6 @@
 // Client entry: account sign-in (email/password, Google, or guest) → character → connect → start Phaser.
 
+import { applyGameData } from "../../shared/gamedata.ts";
 import Phaser from "phaser";
 import { net } from "./net.ts";
 import { state } from "./state.ts";
@@ -81,6 +82,9 @@ async function enterWorld(opts: { session?: string; name?: string; look?: Record
       state.myId = m.you; state.token = m.token || state.token; state.time = m.time; state.timeAt = performance.now();
       state.minutesPerSecond = m.minutesPerSecond;
       if (m.token) storage(TOKEN_KEY, m.token);
+    } else if (m.t === "gamedata") {
+      // the server may run edited items / recipes (tools/item-editor)
+      try { applyGameData(m.data); } catch (e) { console.warn("[gamedata]", e); }
     } else if (m.t === "plots") {
       state.plots = m.plots;
     } else if (m.t === "tiles" && !state.sceneReady) {

@@ -3,7 +3,7 @@
 import type { BusinessInfo, CharInfo, LodgingInfo, DialogLine, DialogMsg, InspectInfo, MarketInfo, SelfState, ChronicleEntry, PoliticsInfo } from "../../shared/protocol.ts";
 import { ITEMS, ITEM_IDS, type ItemGroup, type ItemId, type Slot } from "../../shared/items.ts";
 import { SLOT_NAMES, condLabel, usesLeft, usesOf } from "../../shared/gear.ts";
-import { RECIPES, STATION_NAMES, craftMinutes, nearStation, type Station } from "../../shared/crafting.ts";
+import { RECIPES, STATION_NAMES, craftMinutes, craftRequirements, nearStation, type Station } from "../../shared/crafting.ts";
 import { SKILLS, SKILL_IDS, skillRank, type SkillId } from "../../shared/skills.ts";
 import { INTERACT_RANGE } from "../../shared/constants.ts";
 import { getMap, areaContains, areaAt } from "../../shared/map.ts";
@@ -577,11 +577,18 @@ function renderCraft() {
         const have = inv[i] ?? 0;
         return `<span class="${have < n ? "lack" : ""}">${ITEMS[i].name} ${have}/${n}</span>`;
       }).join("");
-      const can = near && s.coins >= fee && (Object.entries(r.inputs) as [ItemId, number][]).every(([i, n]) => (inv[i] ?? 0) >= n);
+      const has = (t: ItemId) => (inv[t] ?? 0) > 0 || Object.values(s.equip ?? {}).some((x) => x?.item === t);
+      const req = craftRequirements(r, s.skills[r.skill], has);
+      const can = near && req.ok && s.coins >= fee && (Object.entries(r.inputs) as [ItemId, number][]).every(([i, n]) => (inv[i] ?? 0) >= n);
       const secs = Math.round(craftMinutes(r, s.skills[r.skill]) * 0.4);
+      const reqs = [
+        ...(r.tools ?? []).map((t) => `<span class="${has(t) ? "" : "lack"}" title="Інструмент: має бути в сумці чи в руці, зношується">⚒ ${ITEMS[t].name}${has(t) ? " ✓" : ""}</span>`),
+        ...(r.minSkill ? [`<span class="${req.skillShort ? "lack" : ""}" title="Мінімальний рівень навички">${SKILLS[r.skill].name} ≥ ${r.minSkill}${req.skillShort ? ` (у тебе ${Math.floor(s.skills[r.skill] ?? 0)})` : " ✓"}</span>`] : []),
+      ].join("");
       return `<div class="recipe ${can ? "" : "off"}">
         <div><b>${ITEMS[r.out].name}</b>${r.qty > 1 ? ` ×${r.qty}` : ""} <span class="muted">· ${secs} с</span></div>
         <div class="in">${ins}</div>
+        ${reqs ? `<div class="in req">${reqs}</div>` : ""}
         <div class="btns"><button data-craft="${r.id}" data-n="1" ${can ? "" : "disabled"}>Зробити</button><button data-craft="${r.id}" data-n="5" ${can ? "" : "disabled"}>×5</button></div>
       </div>`;
     }).join("");

@@ -58,7 +58,7 @@ const craftLog = (w: World) => w.chronicle.filter((e) => e.kind === "craft").map
 {
   const w = new World();
   const p = createPlayer(w, "p1", "Тестер", "tok", { body: "#000", hair: "#000", skin: "#000" }, "m");
-  p.inv = { wood: 10, stone: 4, grain: 2 };
+  p.inv = { wood: 10, stone: 4, grain: 2, saw: 1 }; // furniture needs a saw
   p.x = 8.5; p.y = 32.2; // next to the public workbench in the warehouse (8,33)
   check("дошки руками", craftOnce(w, p, recipeById("plank")!).ok && p.inv.plank === 2);
   for (let i = 0; i < 2; i++) craftOnce(w, p, recipeById("plank")!);

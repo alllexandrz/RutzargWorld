@@ -9,7 +9,7 @@
 import type { World } from "./world.ts";
 import type { Agent, Being, CraftPlan } from "./types.ts";
 import { ITEMS, invAdd, itemForObj, marketBuyPrice, marketPrice, type Inventory, type ItemId } from "../../shared/items.ts";
-import { RECIPES, RECIPE_BY_OUT, STATION_NAMES, STATION_OBJ, STATION_RANGE, craftMinutes, missingInputs, nearStation, recipeById, type Recipe } from "../../shared/crafting.ts";
+import { RECIPES, RECIPE_BY_OUT, STATION_NAMES, STATION_OBJ, STATION_RANGE, craftMinutes, craftRequirements, missingInputs, nearStation, recipeById, type Recipe } from "../../shared/crafting.ts";
 import { G, O, areaContains, canPlaceAt, findObjNear, idx, inBounds, isWalkable } from "../../shared/map.ts";
 import { changeTile, nearestObj } from "./resources.ts";
 import { skillLevel, trainSkill } from "./skillsys.ts";
@@ -18,7 +18,8 @@ import { newFact, witness } from "./social.ts";
 import { goTo, goToArea } from "./brain.ts";
 import { isChild } from "./family.ts";
 import { reeveId } from "./politics.ts";
-import { equipItem, repairItem, repairQuote } from "./gear.ts";
+import { equipItem, hasItem, repairItem, repairQuote, wearCraftTool } from "./gear.ts";
+import { SKILLS } from "../../shared/skills.ts";
 import { repairStation } from "../../shared/gear.ts";
 import type { Slot } from "../../shared/items.ts";
 import { workshopAt, type Workshop } from "./housing.ts";
@@ -33,6 +34,10 @@ const PLACE_RANGE = 2.6;
 /** Make one batch of a recipe. Inputs/station are validated here — the engine is authoritative. */
 export function craftOnce(w: World, b: Being, rec: Recipe): { ok: boolean; reason?: string } {
   if (!nearStation(w.map, b.x, b.y, rec.station)) return { ok: false, reason: `Потрібно бути біля: ${STATION_NAMES[rec.station]}` };
+  // skill level and tools
+  const req = craftRequirements(rec, skillLevel(b, rec.skill), (t) => hasItem(b, t));
+  if (req.skillShort > 0) return { ok: false, reason: `Замало вміння: потрібно ${SKILLS[rec.skill].name.toLowerCase()} ≥ ${rec.minSkill} (у тебе ${Math.floor(skillLevel(b, rec.skill))})` };
+  if (req.missingTools.length) return { ok: false, reason: `Потрібен інструмент: ${req.missingTools.map((t) => ITEMS[t].name.toLowerCase()).join(", ")}` };
   const lack = missingInputs(b.inv, rec);
   if (Object.keys(lack).length) return { ok: false, reason: `Бракує: ${fmtItems(lack)}` };
   // someone else's workshop: pay the owner's fee for using the station
@@ -45,6 +50,7 @@ export function craftOnce(w: World, b: Being, rec: Recipe): { ok: boolean; reaso
   }
   for (const [item, n] of Object.entries(rec.inputs) as [ItemId, number][]) invAdd(b.inv, item, -n);
   invAdd(b.inv, rec.out, rec.qty);
+  for (const t of rec.tools ?? []) wearCraftTool(w, b, t);
   trainSkill(w, b, rec.skill, Math.max(0.3, rec.minutes / 30));
   return { ok: true };
 }
@@ -147,6 +153,14 @@ function nextStep(w: World, a: Agent, item: ItemId, need: number, plan: CraftPla
   if (!forSale && w.marketStock(item) >= need && (!rec || depth > 0 || plan.payer === "guild")) return { kind: "buy", item, qty: need };
   if (!rec) return w.marketStock(item) > 0 ? { kind: "buy", item, qty: Math.min(need, w.marketStock(item)) } : { kind: "fail", why: `на ринку немає: ${ITEMS[item].name.toLowerCase()}` };
   if (depth > 4) return { kind: "fail", why: "надто складно" };
+  // not skilled enough: buy it made, or give up
+  if ((rec.minSkill ?? 0) > skillLevel(a, rec.skill)) {
+    if (!forSale && w.marketStock(item) > 0) return { kind: "buy", item, qty: Math.min(need, w.marketStock(item)) };
+    return { kind: "fail", why: `замало вміння (${SKILLS[rec.skill].name.toLowerCase()} ≥ ${rec.minSkill})` };
+  }
+  // the craftsman's tool first (bought or made — and kept)
+  const tool = (rec.tools ?? []).find((t) => !hasItem(a, t));
+  if (tool) return nextStep(w, a, tool, 1, plan, depth + 1);
   const lack = missingInputs(a.inv, rec);
   const first = (Object.entries(lack) as [ItemId, number][])[0];
   if (!first) return { kind: "craft", rec };
@@ -477,7 +491,10 @@ function artisans(w: World) {
       const def = ITEMS[rec.out];
       if (rec.out === "meal" || w.marketStock(rec.out) >= def.targetStock) continue;
       if ((a.flags[`craftFail_${rec.out}`] ?? -1e9) > w.time - 1440) continue; // tried and failed recently
-      const cost = materialCost(w, rec.out, rec.qty, { ...a.inv });
+      if ((rec.minSkill ?? 0) > skillLevel(a, rec.skill)) continue; // can't do it yet
+      // tools one doesn't own are an investment that has to pay off too
+      const toolCost = (rec.tools ?? []).filter((t) => !hasItem(a, t)).reduce((s, t) => s + materialCost(w, t, 1, { ...a.inv }), 0);
+      const cost = materialCost(w, rec.out, rec.qty, { ...a.inv }) + toolCost * 0.3;
       if (cost * 1.2 > a.coins - 3) continue;
       const sell = marketBuyPrice(rec.out, w.marketStock(rec.out)) * rec.qty;
       const hours = rec.minutes / 60 + 0.5;

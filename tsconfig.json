@@ -15,5 +15,5 @@
     "noFallthroughCasesInSwitch": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["shared", "server", "client/src", "scripts"]
+  "include": ["shared", "server", "client/src", "scripts", "tools"]
 }

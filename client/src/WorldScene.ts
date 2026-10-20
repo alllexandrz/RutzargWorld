@@ -104,8 +104,10 @@ class EntityView {
     const sig = `${g.h}|${g.b}|${g.w}|${g.o}`;
     if (sig !== this.gearSig) {
       this.gearSig = sig;
-      if (g.h) this.hat.setTexture(`gear_${g.h}`);
-      if (g.w) this.held.setTexture(`gear_${g.w}`);
+      // items added in the editor have no art yet — draw the closest built-in one
+      const tex = (id: string, fallback: string) => (this.hat!.scene.textures.exists(`gear_${id}`) ? `gear_${id}` : fallback);
+      if (g.h) this.hat.setTexture(tex(g.h, "gear_cap"));
+      if (g.w) this.held.setTexture(tex(g.w, "gear_club"));
       // mail shows as a steel-grey tunic
       this.layers[0]?.setTint(Phaser.Display.Color.HexStringToColor(g.b === "chainmail" ? "#8e98a2" : e.l.body).color);
     }

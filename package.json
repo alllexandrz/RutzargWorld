@@ -8,8 +8,9 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "build": "node scripts/build-client.ts",
-    "start": "node scripts/build-client.ts && node --env-file-if-exists=.env server/main.ts",
+    "build": "node scripts/build-client.ts && node tools/item-editor/build.ts",
+    "editor": "node tools/item-editor/build.ts",
+    "start": "node scripts/build-client.ts && node tools/item-editor/build.ts && node --env-file-if-exists=.env server/main.ts",
     "dev": "node scripts/build-client.ts --watch & node --env-file-if-exists=.env --watch server/main.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "sim": "node scripts/headless-sim.ts"

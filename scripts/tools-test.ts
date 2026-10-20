@@ -11,6 +11,9 @@ import { START_COINS } from "../shared/constants.ts";
 import { O, idx, isWalkable } from "../shared/map.ts";
 import { onHour } from "../server/sim/economy.ts";
 import { jail } from "../server/sim/brain.ts";
+import { assignPlan, craftOnce } from "../server/sim/crafting.ts";
+import { recipeById } from "../shared/crafting.ts";
+import { hasItem } from "../server/sim/gear.ts";
 
 let failures = 0;
 const check = (name: string, ok: boolean, extra = "") => { console.log(`${ok ? "✔" : "✘"} ${name}${extra ? ` — ${extra}` : ""}`); if (!ok) failures++; };
@@ -123,6 +126,52 @@ const nearTree = (w: World) => {
   p.coins = 200;
   const rr = repay(w, horst, p);
   check("борг віддано повністю", rr.ok && !(p.loans ?? []).length, rr.reply);
+}
+
+// 5) Crafting requirements: tools and a minimum skill
+{
+  const w = new World();
+  const p = createPlayer(w, "p5", "Учень", "tok", look, "m");
+  p.coins = 500;
+  p.x = 8.5; p.y = 19.5; // by Ulf's anvil
+  p.inv.iron = 10;
+  const knife = recipeById("knife")!;
+  const r1 = craftOnce(w, p, knife);
+  check("без молота на ковадлі не кують", !r1.ok && /інструмент/i.test(r1.reason ?? ""), r1.reason);
+  p.inv.hammer = 1;
+  const r2 = craftOnce(w, p, knife);
+  check("з молотом у сумці — кують", r2.ok && (p.inv.knife ?? 0) === 1, r2.reason);
+  check("молот зношується від роботи", (p.worn?.hammer?.[0] ?? 100) < 100, JSON.stringify(p.worn));
+  const sword = recipeById("sword")!;
+  const r3 = craftOnce(w, p, sword);
+  check("меч новачкові не дається (ковальство ≥ 35)", !r3.ok && /вміння/.test(r3.reason ?? ""), r3.reason);
+  p.skills.smithing = 40;
+  const r4 = craftOnce(w, p, sword);
+  check("досвідчений коваль кує меч", r4.ok && (p.inv.sword ?? 0) === 1, r4.reason);
+  // a hammer with one use left breaks after the next batch
+  p.worn = { hammer: [100 / usesOf("hammer") * 0.5] };
+  p.inv.hammer = 1;
+  craftOnce(w, p, knife);
+  check("зношений молот ламається", !(p.inv.hammer ?? 0));
+}
+
+// 6) NPCs: get the tool first, buy what they can't make yet
+{
+  const w = new World();
+  const a = w.agents.get("kaya")!;
+  a.coins = 400; a.inv = {};
+  delete a.skills.smithing;
+  w.market.stock.knife = 0;
+  assignPlan(w, a, { item: "knife", qty: 1, use: { kind: "keep" }, payer: "self", label: "тест: ніж", priority: 0.9 });
+  let ok = false;
+  for (let i = 0; i < 2 * 1440 * 20 && !ok; i++) { w.tick(0.05); w.pendingTiles.length = 0; ok = (a.inv.knife ?? 0) > 0 || !a.craftPlan; }
+  check("NPC спершу дістає молот, потім кує ніж", (a.inv.knife ?? 0) > 0 && hasItem(a, "hammer"), `ніж ${a.inv.knife ?? 0}, молот ${hasItem(a, "hammer")}, план ${a.craftPlan?.label ?? "—"}`);
+  const b = w.agents.get("toren")!;
+  b.coins = 400; b.inv = {}; b.skills.smithing = 0;
+  w.market.stock.sword = 0;
+  assignPlan(w, b, { item: "sword", qty: 1, use: { kind: "keep" }, payer: "self", label: "тест: меч", priority: 0.9 });
+  for (let i = 0; i < 1440 * 20 && b.craftPlan; i++) { w.tick(0.05); w.pendingTiles.length = 0; }
+  check("NPC без вміння меча не кує", !(b.inv.sword ?? 0), w.chronicle.filter((e) => e.text.includes("Торен кидає задум")).map((e) => e.text).slice(-1)[0] ?? "");
 }
 
 console.log(failures ? `\n${failures} перевірок не пройдено` : "\nУсі перевірки пройдено");

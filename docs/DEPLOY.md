@@ -54,6 +54,19 @@ docker compose exec ollama ollama pull gemma3:4b
 - `state` OAuth перевіряється через HttpOnly-cookie, у ID-токені Google перевіряються `aud`, `iss` і `exp`;
 - є обмеження частоти спроб входу.
 
+## Редактор речей (адміністратори)
+
+Редактор речей відкривається на `https://<домен>/editor/` і доступний **лише адміністраторам**:
+
+1. Зареєструйся в грі (email+пароль або Google) тим акаунтом, який буде адміністратором.
+2. Додай у `.env`:
+   ```
+   ADMIN_EMAILS=you@example.com,colleague@example.com
+   ```
+3. `docker compose up -d`. Тепер `/editor/` просить увійти; входять лише акаунти зі списку.
+
+Без `ADMIN_EMAILS` редактор ззовні закритий повністю. Для скриптів можна задати `ADMIN_TOKEN` (заголовок `x-admin-token`). Подробиці — [tools/item-editor/README.md](../tools/item-editor/README.md).
+
 ## HTTPS і домен (nginx)
 
 Гра в Docker слухає лише `127.0.0.1:8787` (`GAME_BIND`), а назовні її віддає nginx на хості з TLS. Готовий конфіг: [`deploy/nginx/rutzarg.conf`](../deploy/nginx/rutzarg.conf) (HTTP→HTTPS, WebSocket `/ws`, gzip, обмеження частоти для входу).

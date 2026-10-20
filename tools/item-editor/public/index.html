@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rutzarg — Редактор речей</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <header id="toolbar">
+      <div class="brand">RUTZARG <span>Редактор речей</span></div>
+      <div class="tb-group">
+        <button id="tb-import" title="Завантажити поточні речі й рецепти з запущеної гри">⇣ З гри</button>
+        <button id="tb-apply" class="accent" title="Застосувати в запущеній грі (зберігається в data/game-data.json, гравці отримують одразу)">⇡ У гру</button>
+      </div>
+      <div class="tb-group">
+        <button id="tb-open" title="Відкрити JSON-файл">Відкрити…</button>
+        <button id="tb-save" title="Зберегти JSON-файл">Зберегти</button>
+        <button id="tb-builtin" title="Скинути до вбудованих значень коду">Вбудовані</button>
+        <input id="file-input" type="file" accept=".json,application/json" hidden>
+      </div>
+      <div class="tb-group">
+        <button id="tb-undo" title="Скасувати (Ctrl+Z)">↶</button>
+        <button id="tb-redo" title="Повторити (Ctrl+Shift+Z)">↷</button>
+      </div>
+      <div class="tb-group">
+        <button id="tb-new" title="Нова річ">＋ Річ</button>
+        <button id="tb-dup" title="Дублювати вибрану річ">Дублювати</button>
+        <button id="tb-del" title="Видалити (лише нові речі)">Видалити</button>
+      </div>
+      <div class="tb-spacer"></div>
+      <label class="tb-skill" title="Рівень навички для розрахунку часу й доходу">Навичка <input id="tb-skill" type="range" min="0" max="100" value="0"><b id="tb-skill-v">0</b></label>
+      <span id="tb-status" class="muted"></span>
+      <div class="tb-group">
+        <span id="tb-who" class="muted" title="Хто працює в редакторі"></span>
+        <button id="tb-logout" title="Вийти з редактора" hidden>Вийти</button>
+      </div>
+    </header>
+
+    <aside id="outline" class="pane">
+      <div class="pane-h">Речі <span id="outline-count" class="muted"></span></div>
+      <input id="outline-search" placeholder="Пошук: назва, id, група…">
+      <div id="outline-tree"></div>
+    </aside>
+
+    <main id="center" class="pane">
+      <div class="tabs" id="center-tabs">
+        <button data-view="graph" class="sel">Граф ремесла</button>
+        <button data-view="table">Економіка</button>
+        <button data-view="gather">Добування й знаряддя</button>
+        <button data-view="diff">Зміни відносно гри</button>
+      </div>
+      <div id="view"></div>
+    </main>
+
+    <aside id="inspector" class="pane">
+      <div class="pane-h">Інспектор</div>
+      <div id="inspector-body"></div>
+    </aside>
+
+    <section id="bottom" class="pane">
+      <div class="tabs" id="bottom-tabs">
+        <button data-bottom="problems" class="sel">Проблеми <span id="problems-count"></span></button>
+        <button data-bottom="log">Журнал</button>
+      </div>
+      <div id="bottom-body"></div>
+    </section>
+  </div>
+  <script type="module" src="editor.js"></script>
+</body>
+</html>

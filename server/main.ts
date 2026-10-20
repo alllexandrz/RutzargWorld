@@ -4,18 +4,18 @@
 // - talks to clients over WebSocket (/ws)
 
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { extname, join, normalize, resolve } from "node:path";
 import { networkInterfaces } from "node:os";
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import { World } from "./sim/world.ts";
 import { restore, snapshot } from "./persist.ts";
 import { createStorage } from "./storage.ts";
 import { computeStats } from "./stats.ts";
-import { accountFromSession, authConfig, handleAuth } from "./auth.ts";
+import { accountFromSession, authConfig, editorAccess, handleAuth } from "./auth.ts";
 import type { C2S, S2C, EntSnap, SelfState, BusinessInfo, InspectInfo, LodgingInfo, Look, PoliticsInfo } from "../shared/protocol.ts";
 import { GAME_MINUTES_PER_SECOND, SERVER_TICK_HZ, SNAPSHOT_HZ } from "../shared/constants.ts";
 import { ITEM_IDS, ITEMS, marketBuyPrice, marketPrice, type ItemId } from "../shared/items.ts";
@@ -32,6 +32,7 @@ import { discard, equipItem, repairItem, repairQuote, statsOf, unequip } from ".
 import { charInfo } from "./sim/charsheet.ts";
 import { atLodging, bedPrice, livesFree, lodgingPrice, playerLodgers, setLetting, defaultCraftFee, hasWorkshop, landlordName, leaveLodging, lodgingOffers, rentLodging, workshopAt } from "./sim/housing.ts";
 import { STATION_OBJ, STATION_RANGE } from "../shared/crafting.ts";
+import { applyGameData, exportGameData, validateGameData, type GameData } from "../shared/gamedata.ts";
 import { SLOTS, SLOT_NAMES, condLabel } from "../shared/gear.ts";
 import type { Being } from "./sim/types.ts";
 
@@ -39,6 +40,22 @@ const PORT = Number(process.env.PORT ?? 8787);
 const ROOT = resolve(import.meta.dirname, "..");
 const DIST = join(ROOT, "client", "dist");
 const SAVE_FILE = process.env.SAVE_FILE ?? join(ROOT, "data", "world.json");
+/** Items, recipes, tool rules edited in tools/item-editor (overrides the built-in defaults). */
+const GAMEDATA_FILE = process.env.GAMEDATA_FILE ?? join(ROOT, "data", "game-data.json");
+const EDITOR_DIST = join(ROOT, "tools", "item-editor", "dist");
+/** Files of the editor anyone may load (the sign-in page). */
+const EDITOR_PUBLIC = new Set(["login.html", "login.js", "login.js.map", "style.css"]);
+/** Writing game data from outside localhost requires this token (header x-admin-token). */
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
+
+if (existsSync(GAMEDATA_FILE)) {
+  try {
+    const added = applyGameData(JSON.parse(await readFile(GAMEDATA_FILE, "utf8")) as GameData);
+    console.log(`[gamedata] loaded ${GAMEDATA_FILE}${added.length ? ` (+${added.length} new items)` : ""}`);
+  } catch (e) {
+    console.error(`[gamedata] ${GAMEDATA_FILE} ignored:`, (e as Error).message);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // World
@@ -312,6 +329,7 @@ async function joinWorld(s: Session, m: Extract<C2S, { t: "join" }>) {
   s.selfDirty = true;
   storage.upsertPlayers([{ id: p.id, name: p.name, online: true }]).catch((e) => console.warn("[db] players:", e.message));
   send(s, { t: "welcome", you: p.id, token: p.accountId ? "" : p.token, time: world.time, minutesPerSecond: GAME_MINUTES_PER_SECOND });
+  send(s, { t: "gamedata", data: exportGameData("server") });
   send(s, { t: "chronicle", entries: world.chronicle.slice(-80) });
   send(s, { t: "plots", plots: plotStates(world) });
   if (awayReport.length) send(s, { t: "inbox", items: awayReport });
@@ -417,7 +435,7 @@ const http = createServer(async (req, res) => {
     res.writeHead(200, { "content-type": "application/json; charset=utf-8" }).end(JSON.stringify({ ...llmStatus(), reachable: probe.ok, detail: probe.detail }, null, 2));
     return;
   }
-  if (url.pathname.startsWith("/api/auth/") || url.pathname.startsWith("/auth/")) {
+  if (url.pathname.startsWith("/api/auth/") || url.pathname.startsWith("/auth/") || url.pathname.startsWith("/api/editor/")) {
     try {
       if (await handleAuth(req, res, url, {
         storage,
@@ -430,6 +448,28 @@ const http = createServer(async (req, res) => {
       res.writeHead(500).end("auth error");
       return;
     }
+  }
+  if (url.pathname === "/api/gamedata") {
+    await handleGameData(req, res);
+    return;
+  }
+  if (url.pathname === "/editor" || url.pathname.startsWith("/editor/")) {
+    let p = normalize(decodeURIComponent(url.pathname.slice("/editor".length))).replace(/^([/\\])+/, "");
+    if (!p || p.endsWith("/")) p += "index.html";
+    // the login page is public; the editor itself only for admins
+    if (!EDITOR_PUBLIC.has(p)) {
+      const acc = await editorAccess(req, storage);
+      if (!acc.ok) {
+        if (p.endsWith(".html")) res.writeHead(302, { location: "/editor/login.html", "cache-control": "no-store" }).end();
+        else res.writeHead(401, { "content-type": "text/plain; charset=utf-8" }).end(acc.reason);
+        return;
+      }
+    }
+    const file = join(EDITOR_DIST, p);
+    if (!file.startsWith(EDITOR_DIST) || !existsSync(file)) { res.writeHead(404).end("editor not built: npm run editor"); return; }
+    res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream", "cache-control": "no-cache" });
+    res.end(await readFile(file));
+    return;
   }
   if (url.pathname === "/api/stats") {
     const limit = Math.max(1, Math.min(365, Number(url.searchParams.get("days") ?? 30)));
@@ -450,6 +490,44 @@ const http = createServer(async (req, res) => {
     res.writeHead(500).end("error");
   }
 });
+
+// ---------------------------------------------------------------------------
+// Game data (item editor)
+// ---------------------------------------------------------------------------
+
+async function handleGameData(req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) {
+  const json = (code: number, body: unknown) => res.writeHead(code, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }).end(JSON.stringify(body));
+  // who: a signed-in admin of the editor, or a script with ADMIN_TOKEN (constant-time compare)
+  const token = String(req.headers["x-admin-token"] ?? "");
+  const byToken = !!ADMIN_TOKEN && token.length === ADMIN_TOKEN.length && timingSafeEqual(Buffer.from(token), Buffer.from(ADMIN_TOKEN));
+  const access = byToken ? { ok: true as const, who: "ADMIN_TOKEN" } : await editorAccess(req, storage);
+  if (!access.ok) return json(401, { error: access.reason });
+  if (req.method === "GET") return json(200, exportGameData("server"));
+  if (req.method !== "POST") return json(405, { error: "GET або POST" });
+  // a custom header can't be sent cross-site without CORS (which we don't allow) — blocks CSRF from other pages
+  if (req.headers["x-rutzarg-editor"] !== "1") return json(400, { error: "Запит має йти з редактора" });
+  let body = "";
+  for await (const chunk of req) { body += chunk; if (body.length > 2_000_000) return json(413, { error: "Завеликий файл" }); }
+  let data: GameData;
+  try { data = JSON.parse(body) as GameData; } catch { return json(400, { error: "Це не JSON" }); }
+  const problems = validateGameData(data);
+  if (problems.some((p) => p.level === "error")) return json(422, { error: "У даних є помилки", problems });
+  try {
+    const added = applyGameData(data);
+    for (const id of added) world.market.stock[id as ItemId] ??= 0;
+    const effective = exportGameData("server");
+    await mkdir(join(GAMEDATA_FILE, ".."), { recursive: true });
+    await writeFile(GAMEDATA_FILE, JSON.stringify({ ...effective, reference: undefined }, null, 2));
+    broadcast({ t: "gamedata", data: effective });
+    console.log(`[gamedata] applied by ${access.who}`);
+    // the chronicle is visible to players — no admin emails there
+    world.log(`Оновлено дані гри з редактора: ${effective.items.length} речей, ${effective.recipes.length} рецептів${added.length ? `, нові: ${added.join(", ")}` : ""}.`, "world");
+    console.log(`[gamedata] applied from editor (${added.length} new items), saved to ${GAMEDATA_FILE}`);
+    return json(200, { ok: true, added, warnings: problems.filter((p) => p.level === "warning") });
+  } catch (e) {
+    return json(500, { error: (e as Error).message });
+  }
+}
 
 const wss = new WebSocketServer({ server: http, path: "/ws", maxPayload: 64 * 1024 });
 wss.on("connection", (ws) => {

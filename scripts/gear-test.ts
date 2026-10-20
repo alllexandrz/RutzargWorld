@@ -28,6 +28,7 @@ const run = (w: World, minutes: number, until?: () => boolean) => {
   const p = createPlayer(w, "p1", "Тест", "tok", { body: "#445566", hair: "#221100", skin: "#ddaa88" }, "m");
   check("гравець з'являється в сорочці й штанях", p.equip?.body?.item === "shirt" && p.equip?.legs?.item === "trousers");
   p.inv.herbs = 8;
+  p.inv.needle = 1; // sewing needs a needle
   for (let i = 0; i < 4; i++) craftOnce(w, p, recipeById("cloth")!);
   const r = craftOnce(w, p, recipeById("cap")!);
   check("полотно з трав → шапка", r.ok && p.inv.cap === 1, r.reason ?? "");
